@@ -1,0 +1,1174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Monitor / Table</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: #808080;
+    font-family: "Helvetica Neue", Arial, sans-serif;
+  }
+  body {
+    display: flex;
+    align-items: stretch;
+    overflow: hidden;
+  }
+
+  /* ---------- shared SVG drawing styles ---------- */
+  .object    { fill: #ffffff; stroke: #000; stroke-width: 0.6; }
+  .border    { fill: none;    stroke: #000; stroke-width: 0.6; }
+  .circle-bg { fill: #d8d8d8; stroke: #000; stroke-width: 0.6; }
+
+  .inner-c {
+    fill: none;
+    stroke: #000;
+    stroke-width: 0.5;
+    cursor: grab;
+    touch-action: none;
+    pointer-events: all;
+  }
+  .inner-c.dragging { cursor: grabbing; }
+  .inner-circles.locked .inner-c { cursor: not-allowed; pointer-events: none; }
+
+  .ext-line  { stroke: #000; stroke-width: 0.25; }
+  .dim-line  { stroke: #000; stroke-width: 0.25; }
+  .dim-text  { font-size: 14px; fill: #000; text-anchor: middle; dominant-baseline: middle; }
+  .label {
+    font-size: 11px;
+    fill: #fff;
+    text-anchor: middle;
+    dominant-baseline: middle;
+    pointer-events: none;
+    user-select: none;
+    paint-order: stroke;
+    stroke: #000;
+    stroke-width: 2.5;
+    stroke-linejoin: round;
+  }
+
+  /* ---------- concentric oil-paint animation ---------- */
+  @property --shift {
+    syntax: '<percentage>';
+    initial-value: 0%;
+    inherits: false;
+  }
+  .oil-clip {
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    overflow: hidden;
+    position: relative;
+    background: #111;
+  }
+  .oil-ring {
+    --shift: 0%;
+    position: absolute;
+    inset: 0;
+    /* background-image injected from JS using calc(% + var(--shift)) */
+    filter: blur(1.5px) saturate(1.05);
+    will-change: --shift;
+  }
+  .oil-gloss {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    pointer-events: none;
+    background:
+      radial-gradient(ellipse at 32% 22%, rgba(255,255,255,0.40), rgba(255,255,255,0) 55%),
+      radial-gradient(ellipse at 70% 85%, rgba(0,0,0,0.20),       rgba(0,0,0,0)       60%);
+    mix-blend-mode: screen;
+  }
+  @keyframes oilShift {
+    from { --shift: 0%;   }
+    to   { --shift: 100%; }
+  }
+
+  /* ---------- left controls panel ---------- */
+  .controls {
+    margin: 16px;
+    align-self: center;
+    flex-shrink: 0;
+    background: rgba(34, 34, 34, 0.88);
+    color: #fff;
+    padding: 16px 18px;
+    border-radius: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    font-size: 13px;
+    user-select: none;
+    box-shadow: 0 4px 18px rgba(0,0,0,0.35);
+    min-width: 200px;
+    max-width: 220px;
+    z-index: 10;
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
+  }
+  .controls h2 {
+    margin: 0 0 4px 0;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    opacity: 0.55;
+  }
+  .control { display: flex; flex-direction: column; gap: 8px; }
+  .control .row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .control label { opacity: 0.9; }
+  .control .value {
+    font-variant-numeric: tabular-nums;
+    opacity: 0.7;
+    font-size: 12px;
+  }
+  input[type="range"] {
+    width: 100%;
+    cursor: pointer;
+    accent-color: #4caf82;
+  }
+  .switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+  }
+  .switch input { display: none; }
+  .switch-track {
+    position: relative;
+    width: 38px;
+    height: 22px;
+    background: #555;
+    border-radius: 11px;
+    transition: background 0.15s ease;
+    flex-shrink: 0;
+  }
+  .switch-track::before {
+    content: "";
+    position: absolute;
+    top: 2px; left: 2px;
+    width: 18px; height: 18px;
+    background: #fff;
+    border-radius: 50%;
+    transition: transform 0.15s ease;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+  }
+  .switch input:checked + .switch-track { background: #e44b4b; }
+  .switch input:checked + .switch-track::before { transform: translateX(16px); }
+
+  .step-buttons {
+    display: flex;
+    gap: 8px;
+  }
+  .step-buttons button {
+    flex: 1;
+    background: #444;
+    color: #fff;
+    border: 1px solid #666;
+    border-radius: 6px;
+    padding: 8px 0;
+    font-family: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.12s ease;
+  }
+  .step-buttons button:hover  { background: #555; }
+  .step-buttons button:active { background: #666; }
+  .step-buttons button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .reset-btn {
+    background: #444;
+    color: #fff;
+    border: 1px solid #666;
+    border-radius: 4px;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    font-size: 13px;
+    line-height: 1;
+    cursor: pointer;
+    margin-left: 6px;
+    font-family: inherit;
+  }
+  .reset-btn:hover  { background: #555; }
+  .reset-btn:active { background: #666; }
+  .value-row {
+    display: inline-flex;
+    align-items: center;
+  }
+  .coords-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 4px 12px;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+  .coords-list .d   { opacity: 0.65; }
+  .coords-list .xy  { text-align: right; }
+  .coords-hint {
+    font-size: 10.5px;
+    opacity: 0.55;
+    margin: 0;
+    line-height: 1.3;
+  }
+
+  /* ---------- two-view layout ---------- */
+  .views {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: space-evenly;
+    height: 100vh;
+    gap: 8px;
+    padding: 0 12px;
+    min-width: 0;
+  }
+  .view {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    height: 100%;
+  }
+  .view-label {
+    font-size: 10px;
+    color: rgba(0, 0, 0, 0.55);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-top: 6px;
+    user-select: none;
+  }
+  .view svg.board {
+    max-height: 88vh;
+    max-width: 100%;
+    width: auto;
+    overflow: visible;
+  }
+  .view-tilted {
+    perspective: 1800px;
+    perspective-origin: 50% 50%;
+    --tilt: 48deg;
+    --yaw:  0deg;
+  }
+  /* Tab frame around the right view (does not affect left blueprint) */
+  .view-tilted .tab-frame {
+    flex: 1;                                /* fill the .view's full height */
+    border: 1px solid rgba(0, 0, 0, 0.35);
+    background: rgba(0, 0, 0, 0.04);
+    border-radius: 8px;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+    min-width: 0;
+  }
+  .view-tilted .tab-bar {
+    display: flex;
+    gap: 4px;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.25);
+    padding-bottom: 4px;
+    flex: 0 0 auto;
+  }
+  .view-tilted .tab {
+    background: rgba(255, 255, 255, 0.55);
+    border: 1px solid rgba(0, 0, 0, 0.25);
+    color: #2a2a2a;
+    padding: 6px 14px;
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+    border-radius: 5px 5px 0 0;
+    transition: background 0.12s ease, color 0.12s ease;
+  }
+  .view-tilted .tab:hover:not(.is-active) {
+    background: rgba(255, 255, 255, 0.8);
+  }
+  .view-tilted .tab.is-active {
+    background: rgba(34, 34, 34, 0.88);
+    color: #fff;
+    border-color: #1a1a1a;
+  }
+  .view-tilted .tab-content {
+    position: relative;
+    flex: 1;                                /* take remaining space */
+    display: flex;
+    align-items: center;                    /* default: vertically centered */
+    justify-content: center;
+  }
+  /* Sculpture Group tab: anchor the table at the bottom and rotate
+     around its bottom edge, leaving vertical space above for future
+     sculpture content. */
+  .view-tilted .tab-frame.is-sculpture .tab-content {
+    align-items: flex-end;
+  }
+  .view-tilted .tab-frame.is-sculpture .block-3d {
+    transform-origin: 50% 100%;
+  }
+  /* In the perspective view the SVG is wrapped in a 3D block.
+     The block carries the rotation; the SVG just fills it (top face).
+     --u is "1 mm in CSS units": the block is 88vh tall and the viewBox
+     is 745 mm tall, so 1 mm == 88/745 vh. */
+  .view-tilted .block-3d {
+    position: relative;
+    height: 88vh;
+    aspect-ratio: 720 / 745;
+    transform-style: preserve-3d;
+    transform: rotateX(var(--tilt));
+    transform-origin: 50% 50%;
+    --u: calc(88vh / 745);
+    --depth-mm: 100;                            /* table thickness in mm */
+    --depth: calc(var(--depth-mm) * var(--u));
+    --r-big: calc(333.27 * var(--u));           /* big circle radius */
+  }
+  /* Inner wrapper that carries rotateZ. Pivot at the big circle (table)
+     center: viewBox (183, 285.5) maps to (343/720, 370.5/745) of the block. */
+  .view-tilted .rotate-z {
+    position: absolute;
+    inset: 0;
+    transform-style: preserve-3d;
+    transform: rotateZ(var(--yaw));
+    transform-origin: 47.6389% 49.7315%;
+  }
+  .view-tilted svg.board {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    max-width: none;
+    max-height: none;
+    transform: none;
+  }
+  /* ---- big circle as a 3D cylinder ----
+     Big circle center (viewBox): (183, 285.5).  In container coords
+     (viewBox starts at -160,-85): (343, 370.5). */
+  .view-tilted .cyl-back {
+    position: absolute;
+    left:  calc((343 - 333.27) * var(--u));
+    top:   calc((370.5 - 333.27) * var(--u));
+    width:  calc(2 * var(--r-big));
+    height: calc(2 * var(--r-big));
+    border-radius: 50%;
+    background:
+      radial-gradient(circle at 32% 28%, rgba(255,255,255,0.18), rgba(0,0,0,0.45) 80%),
+      #6e6e6e;
+    transform: translateZ(calc(-1 * var(--depth)));
+    pointer-events: none;
+    border: 0.6px solid #1a1a1a;
+    backface-visibility: visible;
+  }
+  .view-tilted .cyl-anchor {
+    position: absolute;
+    left: calc(343 * var(--u));
+    top:  calc(370.5 * var(--u));
+    width: 0;
+    height: 0;
+    transform-style: preserve-3d;
+    pointer-events: none;
+  }
+  .view-tilted .cyl-side {
+    position: absolute;
+    /* width and height come from inline style (depend on N) */
+    background:
+      linear-gradient(to bottom, rgba(255,255,255,0.12), rgba(0,0,0,0.32)),
+      #8a8a8a;
+    border-top:    0.6px solid #1a1a1a;
+    border-bottom: 0.6px solid #1a1a1a;
+    backface-visibility: visible;
+  }
+  /* In the perspective view: hide all dimensions/callouts AND the
+     two rectangles (border + inner rect). Big circle stays as the
+     only flat surface, with a uniform monotone fill. Small animated
+     circles remain visible (and draggable) on top. */
+  .view-tilted .ext-line,
+  .view-tilted .dim-line,
+  .view-tilted .dim-text,
+  .view-tilted .border,
+  .view-tilted .object {
+    display: none;
+  }
+  .view-tilted .circle-bg {
+    fill: #c8c8c8;       /* uniform monotone */
+    stroke: #1a1a1a;
+    stroke-width: 0.6;
+  }
+</style>
+</head>
+<body>
+
+<aside class="controls">
+  <h2>Controls</h2>
+
+  <div class="control">
+    <div class="row">
+      <label for="speed">Flow speed</label>
+      <span class="value" id="speed-val">1.00&times;</span>
+    </div>
+    <input type="range" id="speed" min="0.1" max="3" step="0.05" value="1">
+  </div>
+
+  <div class="control">
+    <div class="row">
+      <label for="tilt">Tilt angle</label>
+      <span class="value" id="tilt-val">48°</span>
+    </div>
+    <input type="range" id="tilt" min="0" max="80" step="1" value="48">
+  </div>
+
+  <div class="control">
+    <div class="row">
+      <label for="yaw">Rotation</label>
+      <span class="value-row">
+        <span class="value" id="yaw-val">0°</span>
+        <button class="reset-btn" id="yaw-reset" type="button" title="Reset rotation to 0°" aria-label="Reset rotation to 0 degrees">↺</button>
+      </span>
+    </div>
+    <input type="range" id="yaw" min="-180" max="180" step="1" value="0">
+  </div>
+
+  <div class="control">
+    <label class="switch">
+      <input type="checkbox" id="lock">
+      <span class="switch-track"></span>
+      <span>Lock positions</span>
+    </label>
+  </div>
+
+  <div class="control">
+    <h2>Circle sizes</h2>
+    <div class="step-buttons">
+      <button id="size-down" type="button"
+              aria-label="Decrease all circle diameters by 5 millimetres">−5 mm</button>
+      <button id="size-up"   type="button"
+              aria-label="Increase all circle diameters by 5 millimetres">+5 mm</button>
+    </div>
+  </div>
+
+  <div class="control">
+    <div class="row">
+      <h2 style="margin:0">Table depth</h2>
+      <span class="value" id="depth-val">100 mm</span>
+    </div>
+    <div class="step-buttons">
+      <button id="depth-down" type="button"
+              aria-label="Decrease table depth by 5 millimetres">−5 mm</button>
+      <button id="depth-up"   type="button"
+              aria-label="Increase table depth by 5 millimetres">+5 mm</button>
+    </div>
+  </div>
+
+  <div class="control">
+    <h2>Coordinates (mm)</h2>
+    <p class="coords-hint">Origin: bottom-left of inner rectangle. X→ right, Y↑ up.</p>
+    <div class="coords-list" id="coords-list"></div>
+  </div>
+</aside>
+
+<main class="views">
+  <div class="view view-flat"   data-view="flat"  ><span class="view-label" style="order:2">Top-down blueprint</span></div>
+  <div class="view view-tilted" data-view="tilted">
+    <div class="tab-frame">
+      <div class="tab-bar" role="tablist">
+        <button class="tab is-active" type="button" role="tab" data-tab="perspective"
+                aria-selected="true">Tilted Perspective</button>
+        <button class="tab"           type="button" role="tab" data-tab="sculpture"
+                aria-selected="false">Tilted Perspective — Sculpture Group</button>
+      </div>
+      <div class="tab-content" data-tab-panel></div>
+    </div>
+    <span class="view-label">Tilted perspective</span>
+  </div>
+</main>
+
+<script>
+(async function () {
+  const STORAGE_KEY = 'rect-circles-v1';
+  const SPEED_KEY   = 'rect-speed-v1';
+  const LOCK_KEY    = 'rect-lock-v1';
+  const TILT_KEY    = 'rect-tilt-v1';
+  const YAW_KEY     = 'rect-yaw-v1';
+  const COORDS_URL  = '/coords';
+  const PERSPECTIVE_PX = 1800;       // matches CSS perspective() value
+
+  // Live angles (degrees) used by clientToSvg; kept in sync with --tilt / --yaw.
+  let tiltDeg = 48;
+  let yawDeg  = 0;
+  // Whether the right view's "Sculpture Group" tab is active. Affects
+  // the perspective view's rotation pivot (and thus the drag math).
+  let sculptureMode = false;
+  const rectX = 40, rectY = 30, rectW = 286, rectH = 511;
+  const minGap = 10;
+  const diameters = [100, 105, 110, 115, 120, 130, 140, 150];
+
+  const svgNS = 'http://www.w3.org/2000/svg';
+
+  // ---- build oil-paint repeating radial gradient (one global rule) ----
+  const palette = [
+    ['#FF1E78', 10.0], ['#D81B72',  3.5], ['#00B5D9', 3.5], ['#7AD7DC', 2.5],
+    ['#F2D1C7',  2.5], ['#FF1020',  8.5], ['#D10018', 5.5], ['#FF1A32', 6.5],
+    ['#005D87',  7.5], ['#53B4D8',  3.5], ['#FF1728', 5.0], ['#FF6B7D', 2.5],
+    ['#D7C9BF',  8.5], ['#E8DDD1',  4.5], ['#2EB4E8', 2.5], ['#FF7A86', 2.5],
+    ['#E00018',  5.5], ['#D60017',  5.5], ['#2AA7CC', 3.5], ['#D8CCC5', 6.0],
+    ['#E5F000',  4.0], ['#10C0CC',  5.0], ['#FF5A8A', 5.0], ['#FF1F8C', 6.0]
+  ];
+  const totalW = palette.reduce((s, p) => s + p[1], 0);
+  {
+    let acc = 0;
+    const stopParts = [];
+    for (const [hex, w] of palette) {
+      const a = (acc / totalW * 100).toFixed(3);
+      acc += w;
+      const b = (acc / totalW * 100).toFixed(3);
+      stopParts.push(`${hex} calc(${a}% + var(--shift))`);
+      stopParts.push(`${hex} calc(${b}% + var(--shift))`);
+    }
+    const grad = `repeating-radial-gradient(circle var(--pr, 150px) at center, ${stopParts.join(', ')})`;
+    const styleEl = document.createElement('style');
+    styleEl.textContent = `.oil-ring { background-image: ${grad}; }`;
+    document.head.appendChild(styleEl);
+  }
+
+  // ---- helpers ----
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  function clampToRect(c) {
+    c.cx = clamp(c.cx, rectX + c.r, rectX + rectW - c.r);
+    c.cy = clamp(c.cy, rectY + c.r, rectY + rectH - c.r);
+  }
+
+  // ---- random / fallback placement ----
+  function tryPlace(diams) {
+    const sorted = [...diams].sort((a, b) => b - a);
+    const out = [];
+    for (const d of sorted) {
+      const r = d / 2;
+      let placed = false;
+      for (let i = 0; i < 4000; i++) {
+        const cx = rectX + r + Math.random() * (rectW - 2 * r);
+        const cy = rectY + r + Math.random() * (rectH - 2 * r);
+        const ok = out.every(c => {
+          const dx = cx - c.cx, dy = cy - c.cy;
+          const need = c.r + r + minGap;
+          return dx * dx + dy * dy >= need * need;
+        });
+        if (ok) { out.push({ cx, cy, r, d }); placed = true; break; }
+      }
+      if (!placed) return null;
+    }
+    return out;
+  }
+  // Verified valid layout for the current diameter set.
+  const fallback = [
+    { d: 150, cx: 251.00, cy: 466.00 },
+    { d: 140, cx: 121.66, cy: 100.00 },
+    { d: 130, cx: 146.37, cy: 358.52 },
+    { d: 120, cx: 266.00, cy:  90.00 },
+    { d: 115, cx:  97.50, cy: 235.36 },
+    { d: 110, cx: 271.00, cy: 293.05 },
+    { d: 105, cx:  92.50, cy: 474.08 },
+    { d: 100, cx: 209.34, cy: 195.98 }
+  ].map(c => ({ ...c, r: c.d / 2 }));
+
+  // ---- persistence ----
+  function validate(data) {
+    if (!Array.isArray(data) || data.length !== diameters.length) return null;
+    for (const c of data) {
+      if (typeof c.d !== 'number' || !isFinite(c.d) || c.d < 20 || c.d > 400) return null;
+      if (typeof c.cx !== 'number' || !isFinite(c.cx)) return null;
+      if (typeof c.cy !== 'number' || !isFinite(c.cy)) return null;
+    }
+    return data.map(c => ({ d: c.d, r: c.d / 2, cx: +c.cx, cy: +c.cy }));
+  }
+  async function loadSaved() {
+    try {
+      const res = await fetch(COORDS_URL, { cache: 'no-store' });
+      if (res.ok) {
+        const data = await res.json();
+        if (data) {
+          const v = validate(data);
+          if (v) return v;
+        }
+      }
+    } catch {}
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) return validate(JSON.parse(raw));
+    } catch {}
+    return null;
+  }
+  function payload() {
+    return circles.map(c => ({ d: c.d, cx: c.cx, cy: c.cy }));
+  }
+  function saveCurrent() {
+    const body = JSON.stringify(payload());
+    try { localStorage.setItem(STORAGE_KEY, body); } catch {}
+    try {
+      fetch(COORDS_URL, {
+        method: 'POST', body, keepalive: true,
+        headers: { 'Content-Type': 'application/json' }
+      }).catch(() => {});
+    } catch {}
+  }
+  function flushSave() {
+    const body = JSON.stringify(payload());
+    try { localStorage.setItem(STORAGE_KEY, body); } catch {}
+    try {
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon(COORDS_URL,
+          new Blob([body], { type: 'application/json' }));
+      } else {
+        fetch(COORDS_URL, {
+          method: 'POST', body, keepalive: true,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+    } catch {}
+  }
+
+  // ---- initial state ----
+  let circles = await loadSaved();
+  const wasLoadedFromStorage = circles !== null;
+  if (!circles) {
+    for (let i = 0; i < 300 && !circles; i++) circles = tryPlace(diameters);
+  }
+  if (!circles) circles = fallback.map(c => ({ ...c }));
+  circles.forEach(clampToRect);
+  if (!wasLoadedFromStorage) saveCurrent();
+
+  // ---- build a board SVG (used for both flat and tilted views) ----
+  function buildBoardSvg(viewName) {
+    const arrowId = `arrow-${viewName}`;
+    const svgHTML = `
+      <svg class="board" data-view="${viewName}" viewBox="-160 -85 720 745" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="${arrowId}" viewBox="0 0 10 10" refX="10" refY="5"
+                  markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#000"/>
+          </marker>
+        </defs>
+
+        <circle class="circle-bg" cx="183" cy="285.5" r="333.27"/>
+        <rect class="border" x="25" y="15" width="316" height="541"/>
+        <rect class="object" x="40" y="30" width="286" height="511"/>
+
+        <g class="inner-circles"></g>
+
+        <line class="ext-line" x1="40"  y1="541" x2="40"  y2="630"/>
+        <line class="ext-line" x1="326" y1="541" x2="326" y2="630"/>
+        <line class="dim-line" x1="40" y1="623" x2="326" y2="623"
+              marker-start="url(#${arrowId})" marker-end="url(#${arrowId})"/>
+        <text class="dim-text" x="183" y="615">286 mm</text>
+
+        <line class="ext-line" x1="326" y1="30"  x2="535" y2="30"/>
+        <line class="ext-line" x1="326" y1="541" x2="535" y2="541"/>
+        <line class="dim-line" x1="528" y1="30" x2="528" y2="541"
+              marker-start="url(#${arrowId})" marker-end="url(#${arrowId})"/>
+        <g transform="translate(520, 285.5) rotate(-90)">
+          <text class="dim-text" x="0" y="0">511 mm</text>
+        </g>
+
+        <line class="dim-line" x1="480" y1="-50" x2="418.66" y2="49.84" marker-end="url(#${arrowId})"/>
+        <text class="dim-text" x="480" y="-62">Ø 667 mm</text>
+
+        <line class="dim-line" x1="-105" y1="-50" x2="32" y2="22.5" marker-end="url(#${arrowId})"/>
+        <text class="dim-text" x="-105" y="-62">15 mm</text>
+      </svg>
+    `;
+    const tmp = document.createElement('div');
+    tmp.innerHTML = svgHTML;
+    return tmp.firstElementChild;
+  }
+
+  // Per-circle base animation parameters (shared between views so they stay in sync)
+  const baseDurations = circles.map((_, idx) => 22 + (idx * 0.83) % 6);
+  const baseDelays    = circles.map((_, idx) => -(idx * 3.7) - (idx * idx * 0.31));
+
+  // Create one view: build the SVG, populate the inner-circles group with elements
+  function createView(viewName, parentEl) {
+    const svg = buildBoardSvg(viewName);
+    let block = null;
+    if (viewName === 'tilted') {
+      // Two nested 3D wrappers:
+      //   .block-3d    -> rotateX (tilt), pivot at center or bottom (per tab)
+      //   .rotate-z    -> rotateZ (spin), pivot at the table (big circle) center
+      block = document.createElement('div');
+      block.className = 'block-3d';
+      const rotateZ = document.createElement('div');
+      rotateZ.className = 'rotate-z';
+
+      // Cylinder back face (Ø 666.54 at z = -depth)
+      const cylBack = document.createElement('div');
+      cylBack.className = 'cyl-back';
+      rotateZ.appendChild(cylBack);
+
+      // Cylinder side wall, approximated by N flat panels arranged around
+      // the big circle. Each panel is rotated around the cylinder axis (Z)
+      // and stood up to extend from z = 0 to z = -depth.
+      const N = 36;
+      const R_MM = 333.27;
+      const W_MM = 2 * Math.PI * R_MM / N + 0.6;   // arc length + slight overlap
+      const anchor = document.createElement('div');
+      anchor.className = 'cyl-anchor';
+      for (let i = 0; i < N; i++) {
+        const angle = (i * 360 / N).toFixed(3);
+        const panelEl = document.createElement('div');
+        panelEl.className = 'cyl-side';
+        panelEl.style.width  = `calc(${W_MM} * var(--u))`;
+        panelEl.style.height = 'var(--depth)';
+        panelEl.style.left   = `calc(${(-W_MM / 2).toFixed(3)} * var(--u))`;
+        panelEl.style.top    = 'calc(-0.5 * var(--depth))';
+        // Translate by -depth/2 in Z so the rotated panel sits in
+        // z ∈ [-depth, 0] (entirely behind the top face) instead of
+        // straddling z = 0.
+        panelEl.style.transform =
+          `rotateZ(${angle}deg)
+           translate3d(0, calc(${R_MM} * var(--u)), calc(-0.5 * var(--depth)))
+           rotateX(90deg)`;
+        panelEl.style.transformOrigin = 'center center';
+        anchor.appendChild(panelEl);
+      }
+      rotateZ.appendChild(anchor);
+
+      svg.classList.add('top-face');
+      rotateZ.appendChild(svg);
+      block.appendChild(rotateZ);
+      // Inject inside the tab content area; the tab-frame is in the HTML.
+      const panelHost = parentEl.querySelector('[data-tab-panel]') || parentEl;
+      panelHost.appendChild(block);
+    } else {
+      parentEl.insertBefore(svg, parentEl.firstChild);
+    }
+    const group = svg.querySelector('.inner-circles');
+
+    const elems = circles.map((c, idx) => {
+      const fo = document.createElementNS(svgNS, 'foreignObject');
+      fo.setAttribute('pointer-events', 'none');
+      group.appendChild(fo);
+
+      const clip = document.createElement('div');
+      clip.className = 'oil-clip';
+
+      const ring = document.createElement('div');
+      ring.className = 'oil-ring';
+      ring.style.setProperty('--pr', `${1.5 * c.d}px`);
+      ring.style.animation      = `oilShift ${baseDurations[idx]}s linear infinite`;
+      ring.style.animationDelay = `${baseDelays[idx]}s`;
+
+      const gloss = document.createElement('div');
+      gloss.className = 'oil-gloss';
+
+      clip.appendChild(ring);
+      clip.appendChild(gloss);
+      fo.appendChild(clip);
+
+      const circle = document.createElementNS(svgNS, 'circle');
+      circle.setAttribute('class', 'inner-c');
+      circle.setAttribute('data-idx', idx);
+      group.appendChild(circle);
+
+      const text = document.createElementNS(svgNS, 'text');
+      text.setAttribute('class', 'label');
+      text.textContent = 'Ø' + c.d;
+      group.appendChild(text);
+
+      return { circle, text, fo, ring };
+    });
+
+    return { svg, group, elems, block };
+  }
+
+  const views = [
+    createView('flat',   document.querySelector('.view-flat')),
+    createView('tilted', document.querySelector('.view-tilted'))
+  ];
+
+  // ---- render: write circle positions into both views' DOM ----
+  function render() {
+    for (const v of views) {
+      for (let i = 0; i < circles.length; i++) {
+        const c = circles[i];
+        const { circle, text, fo } = v.elems[i];
+        circle.setAttribute('cx', c.cx);
+        circle.setAttribute('cy', c.cy);
+        circle.setAttribute('r', c.r);
+        text.setAttribute('x', c.cx);
+        text.setAttribute('y', c.cy);
+        fo.setAttribute('x', c.cx - c.r);
+        fo.setAttribute('y', c.cy - c.r);
+        fo.setAttribute('width',  c.r * 2);
+        fo.setAttribute('height', c.r * 2);
+      }
+    }
+    updateCoords();
+  }
+
+  // ---- coordinates list (origin: bottom-left of inner rect, Y up) ----
+  const coordsListEl = document.getElementById('coords-list');
+  function updateCoords() {
+    const rows = circles
+      .map(c => ({
+        d: c.d,
+        x: c.cx - rectX,
+        y: (rectY + rectH) - c.cy
+      }))
+      .sort((a, b) => a.d - b.d);
+    coordsListEl.innerHTML = rows.map(r =>
+      `<span class="d">Ø${r.d}</span>` +
+      `<span class="xy">${r.x.toFixed(1)},&nbsp;${r.y.toFixed(1)}</span>`
+    ).join('');
+  }
+
+  render();
+
+  // ---- collision resolution ----
+  function resolve(draggedIdx) {
+    const N = circles.length;
+    for (let iter = 0; iter < 80; iter++) {
+      let moved = false;
+      for (let i = 0; i < N; i++) {
+        for (let j = i + 1; j < N; j++) {
+          const a = circles[i], b = circles[j];
+          let dx = b.cx - a.cx, dy = b.cy - a.cy;
+          let dist = Math.hypot(dx, dy);
+          const need = a.r + b.r + minGap;
+          if (dist < need) {
+            if (dist < 1e-6) { dx = 1; dy = 0; dist = 1; }
+            const nx = dx / dist, ny = dy / dist;
+            const push = need - dist;
+            if (i === draggedIdx) {
+              b.cx += nx * push; b.cy += ny * push;
+            } else if (j === draggedIdx) {
+              a.cx -= nx * push; a.cy -= ny * push;
+            } else {
+              a.cx -= nx * push * 0.5; a.cy -= ny * push * 0.5;
+              b.cx += nx * push * 0.5; b.cy += ny * push * 0.5;
+            }
+            moved = true;
+          }
+        }
+      }
+      for (let i = 0; i < N; i++) clampToRect(circles[i]);
+      if (!moved) break;
+    }
+  }
+
+  // ---- drag, attached to BOTH views ----
+  let dragging = null;
+
+  // Convert client (screen) coords to a given SVG's user-space coords.
+  // For the flat view this uses the SVG's own CTM. For the tilted view the
+  // CSS rotateX is approximated by inverting the rotation manually.
+  function clientToSvg(view, clientX, clientY) {
+    const svg = view.svg;
+    if (view !== views[1]) {
+      // flat view -- straight CTM inverse works
+      const pt = svg.createSVGPoint();
+      pt.x = clientX; pt.y = clientY;
+      return pt.matrixTransform(svg.getScreenCTM().inverse());
+    }
+    // Tilted view: two nested rotations with DIFFERENT pivots.
+    //   Outer (.block-3d):  rotateX around either CSS center (Tilted
+    //                       Perspective tab) or bottom-center (Sculpture).
+    //   Inner (.rotate-z):  rotateZ around the table (big circle) center.
+    // To invert: undo perspective + rotateX around outer pivot, then undo
+    // rotateZ around inner pivot.
+    const tilt = tiltDeg * Math.PI / 180;
+    const spin = yawDeg  * Math.PI / 180;
+    const ct = Math.cos(tilt), st = Math.sin(tilt);
+    const cs = Math.cos(spin), ss = Math.sin(spin);
+
+    // Use .block-3d for the outer-rotation pivot reference (it's only
+    // affected by rotateX, so its bbox cleanly reflects the X pivot).
+    const block = view.block || svg;
+    const rect = block.getBoundingClientRect();
+    const naturalW = block.clientWidth  || rect.width;
+    const naturalH = block.clientHeight || rect.height;
+    const vb = svg.viewBox.baseVal;
+
+    if (Math.abs(ct) < 1e-3) {
+      return { x: vb.x + vb.width / 2, y: vb.y + vb.height / 2 };
+    }
+
+    // ---- Step 1: Invert perspective + rotateX (outer) around O ----
+    // O in CSS coords (relative to .block-3d top-left)
+    const Ox = naturalW / 2;
+    const Oy = sculptureMode ? naturalH : naturalH / 2;
+    // O in screen coords (rotation pivot stays put)
+    const O_scrX = rect.left + rect.width / 2;
+    const O_scrY = sculptureMode ? rect.bottom : rect.top + rect.height / 2;
+
+    const sxc = clientX - O_scrX;
+    const syc = clientY - O_scrY;
+    // For a point (qx, qy, 0) inside the inner (post-rotateZ) frame,
+    // after rotateX + perspective:
+    //     sx = qx / k,  sy = qy*ct / k,  k = 1 - qy*st/P
+    const qy = syc / (ct + syc * st / PERSPECTIVE_PX);
+    const k  = 1 - qy * st / PERSPECTIVE_PX;
+    const qx = sxc * k;
+
+    // ---- Step 2: Q is in CSS pixels; undo rotateZ (inner) around C ----
+    // C = table center in CSS pixels (343/720 horizontally, 370.5/745 vertically)
+    const Cx = naturalW * (343 / 720);
+    const Cy = naturalH * (370.5 / 745);
+    // Q = q + O. Then P = R_z(-spin)(Q - C) + C.
+    const dQx = qx + Ox - Cx;
+    const dQy = qy + Oy - Cy;
+    const Px = cs * dQx + ss * dQy + Cx;
+    const Py = -ss * dQx + cs * dQy + Cy;
+
+    // Convert P (CSS pixels in .block-3d frame) to viewBox coords
+    const ux = vb.x + Px * (vb.width  / naturalW);
+    const uy = vb.y + Py * (vb.height / naturalH);
+    return { x: ux, y: uy };
+  }
+
+  for (const v of views) {
+    v.group.addEventListener('pointerdown', (ev) => {
+      if (locked) return;
+      if (ev.target.tagName !== 'circle') return;
+      const idx = parseInt(ev.target.getAttribute('data-idx'), 10);
+      if (Number.isNaN(idx)) return;
+      const p = clientToSvg(v, ev.clientX, ev.clientY);
+      dragging = {
+        idx,
+        offsetX: circles[idx].cx - p.x,
+        offsetY: circles[idx].cy - p.y,
+        el: ev.target,
+        view: v
+      };
+      ev.target.classList.add('dragging');
+      try { ev.target.setPointerCapture(ev.pointerId); } catch {}
+      ev.preventDefault();
+    });
+
+    v.group.addEventListener('pointermove', (ev) => {
+      if (!dragging) return;
+      const p = clientToSvg(dragging.view, ev.clientX, ev.clientY);
+      const c = circles[dragging.idx];
+      c.cx = p.x + dragging.offsetX;
+      c.cy = p.y + dragging.offsetY;
+      clampToRect(c);
+      resolve(dragging.idx);
+      render();
+      saveCurrent();
+    });
+
+    function endDrag(ev) {
+      if (!dragging) return;
+      try { dragging.el.releasePointerCapture(ev.pointerId); } catch {}
+      dragging.el.classList.remove('dragging');
+      saveCurrent();
+      dragging = null;
+    }
+    v.group.addEventListener('pointerup', endDrag);
+    v.group.addEventListener('pointercancel', endDrag);
+  }
+
+  window.addEventListener('pagehide',     flushSave);
+  window.addEventListener('beforeunload', flushSave);
+
+  // ---- speed slider (applies to both views) ----
+  const speedSlider = document.getElementById('speed');
+  const speedVal    = document.getElementById('speed-val');
+
+  function applySpeed(speed) {
+    for (const v of views) {
+      for (let i = 0; i < v.elems.length; i++) {
+        const dur = (baseDurations[i] / speed).toFixed(2);
+        v.elems[i].ring.style.animationDuration = `${dur}s`;
+      }
+    }
+    speedVal.textContent = speed.toFixed(2) + '×';
+  }
+  let savedSpeed = parseFloat(localStorage.getItem(SPEED_KEY));
+  if (!Number.isFinite(savedSpeed) || savedSpeed <= 0) savedSpeed = 1;
+  speedSlider.value = savedSpeed;
+  applySpeed(savedSpeed);
+  speedSlider.addEventListener('input', (ev) => {
+    const s = parseFloat(ev.target.value);
+    applySpeed(s);
+    try { localStorage.setItem(SPEED_KEY, String(s)); } catch {}
+  });
+
+  // ---- tilt slider (rotates the perspective view live) ----
+  const tiltSlider = document.getElementById('tilt');
+  const tiltVal    = document.getElementById('tilt-val');
+  const tiltedRoot = document.querySelector('.view-tilted');
+  function applyTilt(deg) {
+    tiltDeg = deg;
+    tiltedRoot.style.setProperty('--tilt', `${deg}deg`);
+    tiltVal.textContent = `${deg}°`;
+  }
+  let savedTilt = parseFloat(localStorage.getItem(TILT_KEY));
+  if (!Number.isFinite(savedTilt)) savedTilt = 48;
+  savedTilt = clamp(savedTilt, 0, 80);
+  tiltSlider.value = savedTilt;
+  applyTilt(savedTilt);
+  tiltSlider.addEventListener('input', (ev) => {
+    const deg = parseFloat(ev.target.value);
+    applyTilt(deg);
+    try { localStorage.setItem(TILT_KEY, String(deg)); } catch {}
+  });
+
+  // ---- view-angle (yaw) slider: rotates the right view horizontally ----
+  const yawSlider = document.getElementById('yaw');
+  const yawVal    = document.getElementById('yaw-val');
+  function applyYaw(deg) {
+    yawDeg = deg;
+    tiltedRoot.style.setProperty('--yaw', `${deg}deg`);
+    yawVal.textContent = `${deg}°`;
+  }
+  let savedYaw = parseFloat(localStorage.getItem(YAW_KEY));
+  if (!Number.isFinite(savedYaw)) savedYaw = 0;
+  savedYaw = clamp(savedYaw, -180, 180);
+  yawSlider.value = savedYaw;
+  applyYaw(savedYaw);
+  // Magnetic snap-to-0: dragging within ±YAW_SNAP° of 0 locks to 0
+  const YAW_SNAP = 5;
+  yawSlider.addEventListener('input', (ev) => {
+    let deg = parseFloat(ev.target.value);
+    if (Math.abs(deg) <= YAW_SNAP) {
+      deg = 0;
+      ev.target.value = '0';
+    }
+    applyYaw(deg);
+    try { localStorage.setItem(YAW_KEY, String(deg)); } catch {}
+  });
+  document.getElementById('yaw-reset').addEventListener('click', () => {
+    yawSlider.value = '0';
+    applyYaw(0);
+    try { localStorage.setItem(YAW_KEY, '0'); } catch {}
+  });
+
+  // ---- lock switch (applies to both views) ----
+  const lockSwitch = document.getElementById('lock');
+  let locked = localStorage.getItem(LOCK_KEY) === '1';
+  function applyLock() {
+    for (const v of views) {
+      if (locked) v.group.classList.add('locked');
+      else        v.group.classList.remove('locked');
+    }
+    lockSwitch.checked = locked;
+  }
+  applyLock();
+  lockSwitch.addEventListener('change', () => {
+    locked = lockSwitch.checked;
+    applyLock();
+    try { localStorage.setItem(LOCK_KEY, locked ? '1' : '0'); } catch {}
+    if (locked) saveCurrent();
+  });
+
+  // ---- circle-size +/- buttons (apply to ALL circles) ----
+  const SIZE_STEP = 5;
+  const SIZE_MIN  = 50;
+  const SIZE_MAX  = 200;
+  const sizeUpBtn   = document.getElementById('size-up');
+  const sizeDownBtn = document.getElementById('size-down');
+
+  function resizeAllBy(delta) {
+    if (locked) return;
+    // Cap delta so no circle escapes [SIZE_MIN, SIZE_MAX]
+    let lo = -Infinity, hi = Infinity;
+    for (const c of circles) {
+      lo = Math.max(lo, SIZE_MIN - c.d);
+      hi = Math.min(hi, SIZE_MAX - c.d);
+    }
+    const d = clamp(delta, lo, hi);
+    if (d === 0) { updateSizeButtons(); return; }
+
+    for (let i = 0; i < circles.length; i++) {
+      const c = circles[i];
+      c.d += d;
+      c.r = c.d / 2;
+      // Update animation pattern radius and label in both views
+      for (const v of views) {
+        v.elems[i].ring.style.setProperty('--pr', `${1.5 * c.d}px`);
+        v.elems[i].text.textContent = 'Ø' + c.d;
+      }
+    }
+    circles.forEach(clampToRect);
+    resolve(-1);            // push apart any overlaps caused by the resize
+    render();
+    saveCurrent();
+    updateSizeButtons();
+  }
+  function updateSizeButtons() {
+    const minD = Math.min(...circles.map(c => c.d));
+    const maxD = Math.max(...circles.map(c => c.d));
+    sizeDownBtn.disabled = locked || minD - SIZE_STEP < SIZE_MIN;
+    sizeUpBtn.disabled   = locked || maxD + SIZE_STEP > SIZE_MAX;
+  }
+  sizeUpBtn  .addEventListener('click', () => resizeAllBy( SIZE_STEP));
+  sizeDownBtn.addEventListener('click', () => resizeAllBy(-SIZE_STEP));
+
+  // Re-evaluate enabled state whenever the lock toggles
+  lockSwitch.addEventListener('change', updateSizeButtons);
+  updateSizeButtons();
+
+  // ---- table depth +/- buttons (perspective-view cylinder thickness) ----
+  const DEPTH_KEY     = 'rect-depth-v1';
+  const DEPTH_STEP_MM = 5;
+  const DEPTH_MIN_MM  = 0;
+  const DEPTH_MAX_MM  = 300;
+  const DEPTH_DEF_MM  = 100;
+  const depthValEl    = document.getElementById('depth-val');
+  const depthUpBtn    = document.getElementById('depth-up');
+  const depthDownBtn  = document.getElementById('depth-down');
+  const tiltedBlock   = document.querySelector('.view-tilted .block-3d');
+
+  let depthMm = parseFloat(localStorage.getItem(DEPTH_KEY));
+  if (!Number.isFinite(depthMm)) depthMm = DEPTH_DEF_MM;
+  depthMm = clamp(depthMm, DEPTH_MIN_MM, DEPTH_MAX_MM);
+
+  function applyDepth(mm) {
+    depthMm = clamp(mm, DEPTH_MIN_MM, DEPTH_MAX_MM);
+    if (tiltedBlock) tiltedBlock.style.setProperty('--depth-mm', depthMm);
+    depthValEl.textContent = depthMm + ' mm';
+    depthDownBtn.disabled = depthMm - DEPTH_STEP_MM < DEPTH_MIN_MM;
+    depthUpBtn.disabled   = depthMm + DEPTH_STEP_MM > DEPTH_MAX_MM;
+  }
+  applyDepth(depthMm);
+
+  depthUpBtn.addEventListener('click', () => {
+    applyDepth(depthMm + DEPTH_STEP_MM);
+    try { localStorage.setItem(DEPTH_KEY, String(depthMm)); } catch {}
+  });
+  depthDownBtn.addEventListener('click', () => {
+    applyDepth(depthMm - DEPTH_STEP_MM);
+    try { localStorage.setItem(DEPTH_KEY, String(depthMm)); } catch {}
+  });
+
+  // ---- right-view tabs (Tilted Perspective vs Sculpture Group) ----
+  // Both render the same circle data; sculpture mode swaps the rotation
+  // pivot (CSS `transform-origin`) and the table's vertical alignment so
+  // it sits low in the frame, leaving room above for future sculptures.
+  const tabBtns = document.querySelectorAll('.view-tilted .tab');
+  const tabFrame = document.querySelector('.view-tilted .tab-frame');
+  tabBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      tabBtns.forEach(b => {
+        const active = (b === btn);
+        b.classList.toggle('is-active', active);
+        b.setAttribute('aria-selected', active ? 'true' : 'false');
+      });
+      sculptureMode = (btn.dataset.tab === 'sculpture');
+      tabFrame.classList.toggle('is-sculpture', sculptureMode);
+    });
+  });
+})();
+</script>
+
+</body>
+</html>

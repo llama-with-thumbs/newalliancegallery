@@ -1,0 +1,9 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Server temp file written during coord saves
+coords.json.tmp
+
+# Local Claude Code settings
+.claude/settings.local.json
