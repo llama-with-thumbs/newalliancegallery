@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>New Alliance Gallery</title>
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #000;
+    overflow: hidden;
+  }
+  body {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  svg.board {
+    height: 100vh;
+    width: auto;
+    max-width: 100vw;
+    display: block;
+  }
+
+  /* ---------- concentric oil-paint animation (matches the editor) ---------- */
+  @property --shift {
+    syntax: '<percentage>';
+    initial-value: 0%;
+    inherits: false;
+  }
+  .oil-clip {
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    overflow: hidden;
+    position: relative;
+    background: #111;
+  }
+  .oil-ring {
+    --shift: 0%;
+    position: absolute;
+    inset: 0;
+    /* background-image injected from JS using calc(% + var(--shift)) */
+    filter: blur(1.5px) saturate(1.05);
+    will-change: --shift;
+  }
+  .oil-gloss {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    pointer-events: none;
+    background:
+      radial-gradient(ellipse at 32% 22%, rgba(255,255,255,0.40), rgba(255,255,255,0) 55%),
+      radial-gradient(ellipse at 70% 85%, rgba(0,0,0,0.20),       rgba(0,0,0,0)       60%);
+    mix-blend-mode: screen;
+  }
+  @keyframes oilShift {
+    from { --shift: 0%;   }
+    to   { --shift: 100%; }
+  }
+</style>
+</head>
+<body>
+<!-- viewBox = the inner rectangle (40,30,286,511) padded by 10mm of black on every side -->
+<svg class="board" viewBox="30 20 306 531" xmlns="http://www.w3.org/2000/svg">
+  <g class="inner-circles"></g>
+</svg>
+
+<script>
+(function () {
+  const COORDS_URL = './coords.json';   // same file the editor's server writes
+  const POLL_MS    = 3000;              // live auto-refresh interval
+  const svgNS      = 'http://www.w3.org/2000/svg';
+  const group      = document.querySelector('.inner-circles');
+
+  // ---- build the oil-paint repeating radial gradient (one global rule) ----
+  const palette = [
+    ['#FF1E78', 10.0], ['#D81B72',  3.5], ['#00B5D9', 3.5], ['#7AD7DC', 2.5],
+    ['#F2D1C7',  2.5], ['#FF1020',  8.5], ['#D10018', 5.5], ['#FF1A32', 6.5],
+    ['#005D87',  7.5], ['#53B4D8',  3.5], ['#FF1728', 5.0], ['#FF6B7D', 2.5],
+    ['#D7C9BF',  8.5], ['#E8DDD1',  4.5], ['#2EB4E8', 2.5], ['#FF7A86', 2.5],
+    ['#E00018',  5.5], ['#D60017',  5.5], ['#2AA7CC', 3.5], ['#D8CCC5', 6.0],
+    ['#E5F000',  4.0], ['#10C0CC',  5.0], ['#FF5A8A', 5.0], ['#FF1F8C', 6.0]
+  ];
+  const totalW = palette.reduce((s, p) => s + p[1], 0);
+  {
+    let acc = 0;
+    const stopParts = [];
+    for (const [hex, w] of palette) {
+      const a = (acc / totalW * 100).toFixed(3);
+      acc += w;
+      const b = (acc / totalW * 100).toFixed(3);
+      stopParts.push(`${hex} calc(${a}% + var(--shift))`);
+      stopParts.push(`${hex} calc(${b}% + var(--shift))`);
+    }
+    const grad = `repeating-radial-gradient(circle var(--pr, 150px) at center, ${stopParts.join(', ')})`;
+    const styleEl = document.createElement('style');
+    styleEl.textContent = `.oil-ring { background-image: ${grad}; }`;
+    document.head.appendChild(styleEl);
+  }
+
+  // ---- state ----
+  let current = [];      // [{ d, cx, cy, r }]
+  let elems   = [];      // [{ fo, ring }]
+  let lastRaw = null;    // last coords.json text seen (skip rebuilds when unchanged)
+
+  // Accept any array of { d, cx, cy } numbers; ignore anything malformed.
+  function normalize(data) {
+    if (!Array.isArray(data)) return null;
+    const out = [];
+    for (const c of data) {
+      const d = +c.d, cx = +c.cx, cy = +c.cy;
+      if (!isFinite(d) || !isFinite(cx) || !isFinite(cy)) return null;
+      out.push({ d, cx, cy, r: d / 2 });
+    }
+    return out;
+  }
+
+  // Per-circle animation params keyed by index (same formula as the editor).
+  function animFor(idx) {
+    return {
+      dur:   22 + (idx * 0.83) % 6,
+      delay: -(idx * 3.7) - (idx * idx * 0.31)
+    };
+  }
+
+  function build(circles) {
+    group.textContent = '';
+    elems = circles.map((c, idx) => {
+      const fo = document.createElementNS(svgNS, 'foreignObject');
+      fo.setAttribute('pointer-events', 'none');
+
+      const clip = document.createElement('div');
+      clip.className = 'oil-clip';
+
+      const ring = document.createElement('div');
+      ring.className = 'oil-ring';
+      ring.style.setProperty('--pr', `${1.5 * c.d}px`);
+      const { dur, delay } = animFor(idx);
+      ring.style.animation      = `oilShift ${dur}s linear infinite`;
+      ring.style.animationDelay = `${delay}s`;
+
+      const gloss = document.createElement('div');
+      gloss.className = 'oil-gloss';
+
+      clip.appendChild(ring);
+      clip.appendChild(gloss);
+      fo.appendChild(clip);
+      group.appendChild(fo);
+      return { fo, ring };
+    });
+    current = circles;
+    place();
+  }
+
+  function place() {
+    for (let i = 0; i < current.length; i++) {
+      const c = current[i];
+      const { fo } = elems[i];
+      fo.setAttribute('x', c.cx - c.r);
+      fo.setAttribute('y', c.cy - c.r);
+      fo.setAttribute('width',  c.r * 2);
+      fo.setAttribute('height', c.r * 2);
+    }
+  }
+
+  // Update in place when the circle count is unchanged (keeps animation phase
+  // continuous); otherwise rebuild from scratch.
+  function apply(circles) {
+    if (elems.length === circles.length) {
+      for (let i = 0; i < circles.length; i++) {
+        if (circles[i].d !== current[i].d) {
+          elems[i].ring.style.setProperty('--pr', `${1.5 * circles[i].d}px`);
+        }
+      }
+      current = circles;
+      place();
+    } else {
+      build(circles);
+    }
+  }
+
+  async function poll() {
+    try {
+      const res = await fetch(COORDS_URL, { cache: 'no-store' });
+      if (!res.ok) return;
+      const text = await res.text();
+      if (text === lastRaw) return;          // nothing changed
+      const norm = normalize(JSON.parse(text));
+      if (norm) { lastRaw = text; apply(norm); }
+    } catch (e) { /* offline / mid-write — try again next tick */ }
+  }
+
+  poll();
+  setInterval(poll, POLL_MS);
+})();
+</script>
+</body>
+</html>
