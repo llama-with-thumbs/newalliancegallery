@@ -4,6 +4,21 @@ A small browser-based tool for planning the layout of circular tables (a "sculpt
 group") in a gallery space. You arrange and resize the circles, and their positions
 are persisted to disk so the layout survives a page reload.
 
+## Live display
+
+A public, read-only display is published via GitHub Pages:
+
+**https://llama-with-thumbs.github.io/newalliancegallery/**
+
+It shows only the circles (with their animated oil-paint fill) on a black
+background — no controls, rulers, or labels. The page polls `coords.json` every
+few seconds, so it stays synchronized with the committed layout: edit locally,
+commit and push `coords.json`, and any open display refreshes on its own within a
+few seconds.
+
+`index.html` is the display page (deployed from `master` / root); it fetches
+`./coords.json` from the repo rather than the local `/coords` API.
+
 ## Views
 
 - **Top-down blueprint** — a flat, to-scale plan of the circles with their
