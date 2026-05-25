@@ -5,196 +5,203 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>New Alliance Gallery</title>
 <style>
-  html, body {
-    margin: 0;
-    height: 100%;
-    background: #000;
-    overflow: hidden;
-  }
-  body {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  svg.board {
-    height: 100vh;
-    width: auto;
-    max-width: 100vw;
-    display: block;
-  }
-
-  /* ---------- concentric oil-paint animation (matches the editor) ---------- */
-  @property --shift {
-    syntax: '<percentage>';
-    initial-value: 0%;
-    inherits: false;
-  }
-  .oil-clip {
-    width: 100%;
-    height: 100%;
-    border-radius: 50%;
-    overflow: hidden;
-    position: relative;
-    background: #111;
-  }
-  .oil-ring {
-    --shift: 0%;
-    position: absolute;
-    inset: 0;
-    /* background-image injected from JS using calc(% + var(--shift)) */
-    filter: blur(1.5px) saturate(1.05);
-    will-change: --shift;
-  }
-  .oil-gloss {
-    position: absolute;
-    inset: 0;
-    border-radius: 50%;
-    pointer-events: none;
-    background:
-      radial-gradient(ellipse at 32% 22%, rgba(255,255,255,0.40), rgba(255,255,255,0) 55%),
-      radial-gradient(ellipse at 70% 85%, rgba(0,0,0,0.20),       rgba(0,0,0,0)       60%);
-    mix-blend-mode: screen;
-  }
-  @keyframes oilShift {
-    from { --shift: 0%;   }
-    to   { --shift: 100%; }
-  }
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  /* Natural (portrait) orientation; the kiosk display applies its own 90 deg rotation. */
+  canvas#gl { display: block; width: 100vw; height: 100vh; background: #000; }
 </style>
 </head>
 <body>
-<!-- viewBox = the inner rectangle (40,30,286,511) padded by 10mm of black on every side.
-     Natural (portrait) orientation; the kiosk display applies its own 90° rotation. -->
-<svg class="board" viewBox="30 20 306 531" xmlns="http://www.w3.org/2000/svg">
-  <g class="inner-circles"></g>
-</svg>
+<canvas id="gl"></canvas>
 
 <script>
 (function () {
+  'use strict';
   const COORDS_URL = './coords.json';   // same file the editor's server writes
-  const POLL_MS    = 3000;              // live auto-refresh interval
-  const svgNS      = 'http://www.w3.org/2000/svg';
-  const group      = document.querySelector('.inner-circles');
+  const POLL_MS    = 3000;
+  const MAX        = 32;                 // shader circle capacity
+  // World view = the inner rectangle (40,30,286,511) padded by 10mm of black.
+  const VB = { x: 30, y: 20, w: 306, h: 531 };
 
-  // ---- build the oil-paint repeating radial gradient (one global rule) ----
-  const palette = [
-    ['#FF1E78', 10.0], ['#D81B72',  3.5], ['#00B5D9', 3.5], ['#7AD7DC', 2.5],
-    ['#F2D1C7',  2.5], ['#FF1020',  8.5], ['#D10018', 5.5], ['#FF1A32', 6.5],
-    ['#005D87',  7.5], ['#53B4D8',  3.5], ['#FF1728', 5.0], ['#FF6B7D', 2.5],
-    ['#D7C9BF',  8.5], ['#E8DDD1',  4.5], ['#2EB4E8', 2.5], ['#FF7A86', 2.5],
-    ['#E00018',  5.5], ['#D60017',  5.5], ['#2AA7CC', 3.5], ['#D8CCC5', 6.0],
-    ['#E5F000',  4.0], ['#10C0CC',  5.0], ['#FF5A8A', 5.0], ['#FF1F8C', 6.0]
-  ];
-  const totalW = palette.reduce((s, p) => s + p[1], 0);
-  {
-    let acc = 0;
-    const stopParts = [];
-    for (const [hex, w] of palette) {
-      const a = (acc / totalW * 100).toFixed(3);
-      acc += w;
-      const b = (acc / totalW * 100).toFixed(3);
-      stopParts.push(`${hex} calc(${a}% + var(--shift))`);
-      stopParts.push(`${hex} calc(${b}% + var(--shift))`);
-    }
-    const grad = `repeating-radial-gradient(circle var(--pr, 150px) at center, ${stopParts.join(', ')})`;
-    const styleEl = document.createElement('style');
-    styleEl.textContent = `.oil-ring { background-image: ${grad}; }`;
-    document.head.appendChild(styleEl);
-  }
+  const canvas = document.getElementById('gl');
+  const gl = canvas.getContext('webgl', { antialias: true, alpha: false, premultipliedAlpha: false });
+  if (!gl) { document.body.innerHTML = '<p style="color:#888;font:14px sans-serif">WebGL not available.</p>'; return; }
 
-  // ---- state ----
-  let current = [];      // [{ d, cx, cy, r }]
-  let elems   = [];      // [{ fo, ring }]
-  let lastRaw = null;    // last coords.json text seen (skip rebuilds when unchanged)
+  // ---------- shaders ----------
+  const VERT = `
+    attribute vec2 aPos;
+    void main() { gl_Position = vec4(aPos, 0.0, 1.0); }
+  `;
+  const FRAG = `
+    precision highp float;
+    const int MAX = ${MAX};
+    uniform vec2  uResolution;
+    uniform float uScale, uOx, uOy, uVbX, uVbY;
+    uniform int   uCount;
+    uniform vec2  uCenters[MAX];
+    uniform float uRadii[MAX];
+    uniform float uShift[MAX];
+    uniform sampler2D uPalette;
 
-  // Accept any array of { d, cx, cy } numbers; ignore anything malformed.
-  function normalize(data) {
-    if (!Array.isArray(data)) return null;
-    const out = [];
-    for (const c of data) {
-      const d = +c.d, cx = +c.cx, cy = +c.cy;
-      if (!isFinite(d) || !isFinite(cx) || !isFinite(cy)) return null;
-      out.push({ d, cx, cy, r: d / 2 });
-    }
-    return out;
-  }
+    void main() {
+      // fragment pixel -> world coordinate (world Y increases downward)
+      float wx = uVbX + (gl_FragCoord.x - uOx) / uScale;
+      float wy = uVbY + ((uResolution.y - gl_FragCoord.y) - uOy) / uScale;
+      vec2 world = vec2(wx, wy);
 
-  // Per-circle animation params keyed by index (same formula as the editor).
-  function animFor(idx) {
-    return {
-      dur:   22 + (idx * 0.83) % 6,
-      delay: -(idx * 3.7) - (idx * idx * 0.31)
-    };
-  }
-
-  function build(circles) {
-    group.textContent = '';
-    elems = circles.map((c, idx) => {
-      const fo = document.createElementNS(svgNS, 'foreignObject');
-      fo.setAttribute('pointer-events', 'none');
-
-      const clip = document.createElement('div');
-      clip.className = 'oil-clip';
-
-      const ring = document.createElement('div');
-      ring.className = 'oil-ring';
-      ring.style.setProperty('--pr', `${1.5 * c.d}px`);
-      const { dur, delay } = animFor(idx);
-      ring.style.animation      = `oilShift ${dur}s linear infinite`;
-      ring.style.animationDelay = `${delay}s`;
-
-      const gloss = document.createElement('div');
-      gloss.className = 'oil-gloss';
-
-      clip.appendChild(ring);
-      clip.appendChild(gloss);
-      fo.appendChild(clip);
-      group.appendChild(fo);
-      return { fo, ring };
-    });
-    current = circles;
-    place();
-  }
-
-  function place() {
-    for (let i = 0; i < current.length; i++) {
-      const c = current[i];
-      const { fo } = elems[i];
-      fo.setAttribute('x', c.cx - c.r);
-      fo.setAttribute('y', c.cy - c.r);
-      fo.setAttribute('width',  c.r * 2);
-      fo.setAttribute('height', c.r * 2);
-    }
-  }
-
-  // Update in place when the circle count is unchanged (keeps animation phase
-  // continuous); otherwise rebuild from scratch.
-  function apply(circles) {
-    if (elems.length === circles.length) {
-      for (let i = 0; i < circles.length; i++) {
-        if (circles[i].d !== current[i].d) {
-          elems[i].ring.style.setProperty('--pr', `${1.5 * circles[i].d}px`);
+      vec3 col = vec3(0.0);             // black background
+      for (int i = 0; i < MAX; i++) {
+        if (i >= uCount) break;
+        vec2  ctr = uCenters[i];
+        float r   = uRadii[i];
+        float d   = distance(world, ctr);
+        if (d <= r + 1.0) {
+          // oil-paint concentric rings: one full palette period = 1.5*diameter = 3*r
+          float t  = d / (3.0 * r);
+          float pp = fract(t - uShift[i]);
+          vec3  c  = texture2D(uPalette, vec2(pp, 0.5)).rgb;
+          // gloss: soft highlight top-left, subtle shadow bottom-right (disc-local coords)
+          vec2  local = (world - ctr) / r;
+          float hi = 1.0 - smoothstep(0.0, 1.15, distance(local, vec2(-0.40, -0.50)));
+          float sh = 1.0 - smoothstep(0.0, 1.00, distance(local, vec2( 0.45,  0.62)));
+          c = clamp(c + hi * 0.40 - sh * 0.12, 0.0, 1.0);
+          // antialiased edge against whatever is behind (usually black)
+          float e = clamp((r - d) * uScale, 0.0, 1.0);
+          col = mix(col, c, e);
         }
       }
-      current = circles;
-      place();
-    } else {
-      build(circles);
+      gl_FragColor = vec4(col, 1.0);
+    }
+  `;
+
+  function compile(type, src) {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+    return s;
+  }
+  const prog = gl.createProgram();
+  gl.attachShader(prog, compile(gl.VERTEX_SHADER, VERT));
+  gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FRAG));
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+  gl.useProgram(prog);
+
+  // ---------- fullscreen quad ----------
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+  const aPos = gl.getAttribLocation(prog, 'aPos');
+  gl.enableVertexAttribArray(aPos);
+  gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+  // ---------- uniform locations ----------
+  const U = {};
+  for (const n of ['uResolution','uScale','uOx','uOy','uVbX','uVbY','uCount','uCenters','uRadii','uShift','uPalette'])
+    U[n] = gl.getUniformLocation(prog, n);
+
+  // ---------- palette texture (oil-paint bands, softened) ----------
+  function hex2rgb(h){ const v=parseInt(h.slice(1),16); return [(v>>16)&255,(v>>8)&255,v&255]; }
+  function buildPalette() {
+    const palette = [
+      ['#FF1E78',10.0],['#D81B72',3.5],['#00B5D9',3.5],['#7AD7DC',2.5],
+      ['#F2D1C7', 2.5],['#FF1020',8.5],['#D10018',5.5],['#FF1A32',6.5],
+      ['#005D87', 7.5],['#53B4D8',3.5],['#FF1728',5.0],['#FF6B7D',2.5],
+      ['#D7C9BF', 8.5],['#E8DDD1',4.5],['#2EB4E8',2.5],['#FF7A86',2.5],
+      ['#E00018', 5.5],['#D60017',5.5],['#2AA7CC',3.5],['#D8CCC5',6.0],
+      ['#E5F000', 4.0],['#10C0CC',5.0],['#FF5A8A',5.0],['#FF1F8C',6.0]
+    ];
+    const W = 1024, total = palette.reduce((s,p)=>s+p[1],0);
+    const bands = []; let acc = 0;
+    for (const [hex,w] of palette){ const a=acc/total; acc+=w; bands.push([a, acc/total, hex2rgb(hex)]); }
+    const data = new Uint8Array(W*4);
+    for (let x=0;x<W;x++){
+      const p=x/W; let rgb=bands[bands.length-1][2];
+      for (const [a,b,c] of bands){ if(p>=a && p<b){ rgb=c; break; } }
+      data[x*4]=rgb[0]; data[x*4+1]=rgb[1]; data[x*4+2]=rgb[2]; data[x*4+3]=255;
+    }
+    // wrap-around box blur (mimics the editor's blur(1.5px) soft band edges)
+    const blur = (rad)=>{ const s=data.slice();
+      for(let x=0;x<W;x++){ let r=0,g=0,b=0,n=0;
+        for(let k=-rad;k<=rad;k++){ const xx=((x+k)%W+W)%W; r+=s[xx*4];g+=s[xx*4+1];b+=s[xx*4+2];n++; }
+        data[x*4]=r/n|0; data[x*4+1]=g/n|0; data[x*4+2]=b/n|0; } };
+    blur(5); blur(5);
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,W,1,0,gl.RGBA,gl.UNSIGNED_BYTE,data);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);          // seamless ring loop
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.uniform1i(U.uPalette, 0);
+  }
+  buildPalette();
+
+  // ---------- circle state ----------
+  let count = 0, lastRaw = null;
+  const centers = new Float32Array(MAX*2);
+  const radii   = new Float32Array(MAX);
+  const shift   = new Float32Array(MAX);
+  const durs    = new Float32Array(MAX);
+  const offs    = new Float32Array(MAX);
+
+  function normalize(data){
+    if (!Array.isArray(data)) return null;
+    const out=[];
+    for (const c of data){ const d=+c.d,cx=+c.cx,cy=+c.cy;
+      if(!isFinite(d)||!isFinite(cx)||!isFinite(cy)) return null;
+      out.push({cx,cy,r:d/2}); }
+    return out;
+  }
+  function setCircles(list){
+    count = Math.min(list.length, MAX);
+    for (let i=0;i<count;i++){
+      centers[i*2]=list[i].cx; centers[i*2+1]=list[i].cy; radii[i]=list[i].r;
+      durs[i]=22 + (i*0.83)%6;            // per-circle period (matches editor)
+      offs[i]=(i*3.7) + (i*i*0.31);       // per-circle phase offset
     }
   }
 
-  async function poll() {
+  async function poll(){
     try {
-      const res = await fetch(COORDS_URL, { cache: 'no-store' });
+      const res = await fetch(COORDS_URL, { cache:'no-store' });
       if (!res.ok) return;
       const text = await res.text();
-      if (text === lastRaw) return;          // nothing changed
+      if (text === lastRaw) return;
       const norm = normalize(JSON.parse(text));
-      if (norm) { lastRaw = text; apply(norm); }
-    } catch (e) { /* offline / mid-write — try again next tick */ }
+      if (norm){ lastRaw = text; setCircles(norm); }
+    } catch(e) {}
+  }
+
+  // ---------- render loop ----------
+  function render(){
+    const dpr = Math.min(window.devicePixelRatio||1, 2);
+    const w = Math.floor(canvas.clientWidth*dpr), h = Math.floor(canvas.clientHeight*dpr);
+    if (canvas.width!==w || canvas.height!==h){ canvas.width=w; canvas.height=h; gl.viewport(0,0,w,h); }
+
+    const scale = Math.min(w/VB.w, h/VB.h);
+    const ox = (w - VB.w*scale)/2, oy = (h - VB.h*scale)/2;
+
+    const T = performance.now()/1000;
+    for (let i=0;i<count;i++){ const p=(T+offs[i])/durs[i]; shift[i]=p-Math.floor(p); }
+
+    gl.uniform2f(U.uResolution, w, h);
+    gl.uniform1f(U.uScale, scale); gl.uniform1f(U.uOx, ox); gl.uniform1f(U.uOy, oy);
+    gl.uniform1f(U.uVbX, VB.x); gl.uniform1f(U.uVbY, VB.y);
+    gl.uniform1i(U.uCount, count);
+    gl.uniform2fv(U.uCenters, centers);
+    gl.uniform1fv(U.uRadii, radii);
+    gl.uniform1fv(U.uShift, shift);
+
+    gl.clearColor(0,0,0,1); gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    requestAnimationFrame(render);
   }
 
   poll();
   setInterval(poll, POLL_MS);
+  requestAnimationFrame(render);
 })();
 </script>
 </body>

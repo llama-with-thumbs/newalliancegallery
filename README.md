@@ -17,7 +17,9 @@ commit and push `coords.json`, and any open display refreshes on its own within 
 few seconds.
 
 `index.html` is the display page (deployed from `master` / root); it fetches
-`./coords.json` from the repo rather than the local `/coords` API.
+`./coords.json` from the repo rather than the local `/coords` API. The circles and
+their flowing oil-paint fill are rendered in a single WebGL/GLSL fragment shader so
+the animation runs on the GPU — smooth even on a Raspberry Pi kiosk.
 
 ## Views
 
