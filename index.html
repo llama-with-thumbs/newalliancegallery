@@ -17,10 +17,11 @@
     justify-content: center;
   }
   svg.board {
+    width: 100vw;
     height: 100vh;
-    width: auto;
-    max-width: 100vw;
     display: block;
+    /* preserveAspectRatio (default xMidYMid meet) fits + centers the
+       landscape drawing; the black letterbox is invisible on a black page. */
   }
 
   /* ---------- concentric oil-paint animation (matches the editor) ---------- */
@@ -62,9 +63,11 @@
 </style>
 </head>
 <body>
-<!-- viewBox = the inner rectangle (40,30,286,511) padded by 10mm of black on every side -->
-<svg class="board" viewBox="30 20 306 531" xmlns="http://www.w3.org/2000/svg">
-  <g class="inner-circles"></g>
+<!-- The inner rectangle (40,30,286,511) rotated 90° to landscape (511x286),
+     padded by 10mm of black. viewBox follows the rotated bounding box. -->
+<svg class="board" viewBox="-82.5 132.5 531 306" xmlns="http://www.w3.org/2000/svg">
+  <!-- rotate the whole layout 90° clockwise about the rectangle centre (183, 285.5) -->
+  <g class="inner-circles" transform="rotate(90 183 285.5)"></g>
 </svg>
 
 <script>
