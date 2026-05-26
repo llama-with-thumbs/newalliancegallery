@@ -33,6 +33,14 @@
   .inner-c.dragging { cursor: grabbing; }
   .inner-circles.locked .inner-c { cursor: not-allowed; pointer-events: none; }
 
+  /* translucent halo behind each circle */
+  .halo {
+    fill: rgba(255, 255, 255, 0.16);
+    stroke: rgba(90, 90, 90, 0.30);
+    stroke-width: 0.5;
+    pointer-events: none;
+  }
+
   .ext-line  { stroke: #000; stroke-width: 0.25; }
   .dim-line  { stroke: #000; stroke-width: 0.25; }
   .dim-text  { font-size: 14px; fill: #000; text-anchor: middle; dominant-baseline: middle; }
@@ -173,10 +181,12 @@
   .add-circle-btn:hover { background: #4caf82; }
   .circle-rows { display: flex; flex-direction: column; gap: 6px; }
   .circle-row {
-    display: flex; align-items: center; justify-content: space-between; gap: 8px;
-    background: rgba(255,255,255,0.06); border-radius: 6px; padding: 5px 6px 5px 10px;
+    display: flex; flex-direction: column; gap: 4px;
+    background: rgba(255,255,255,0.06); border-radius: 6px; padding: 6px 6px 6px 10px;
   }
-  .cr-d { font-variant-numeric: tabular-nums; opacity: 0.85; }
+  .cr-line { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .cr-d { font-variant-numeric: tabular-nums; opacity: 0.9; }
+  .cr-hd { font-variant-numeric: tabular-nums; opacity: 0.5; font-size: 11px; }
   .cr-actions { display: flex; gap: 4px; }
   .cr-actions button {
     width: 24px; height: 24px; padding: 0; background: #444; color: #fff;
@@ -663,6 +673,8 @@
   const rectX = 40, rectY = 30, rectW = 286, rectH = 511;
   const minGap = 10;
   const diameters = [100, 105, 110, 115, 120, 130, 140, 150];
+  // translucent halo around each circle (independent diameter; may overlap and exceed the frame)
+  const HALO_DEFAULT = 250, HALO_MIN = 0, HALO_MAX = 2000, HALO_STEP = 10;
 
   const svgNS = 'http://www.w3.org/2000/svg';
 
@@ -740,7 +752,11 @@
       if (typeof c.cx !== 'number' || !isFinite(c.cx)) return null;
       if (typeof c.cy !== 'number' || !isFinite(c.cy)) return null;
     }
-    return data.map(c => ({ d: c.d, r: c.d / 2, cx: +c.cx, cy: +c.cy }));
+    return data.map(c => {
+      let hd = (typeof c.hd === 'number' && isFinite(c.hd)) ? c.hd : HALO_DEFAULT;
+      hd = Math.max(HALO_MIN, Math.min(HALO_MAX, hd));
+      return { d: c.d, r: c.d / 2, cx: +c.cx, cy: +c.cy, hd };
+    });
   }
   async function loadSaved() {
     try {
@@ -760,7 +776,7 @@
     return null;
   }
   function payload() {
-    return circles.map(c => ({ d: c.d, cx: c.cx, cy: c.cy }));
+    return circles.map(c => ({ d: c.d, cx: c.cx, cy: c.cy, hd: c.hd }));
   }
   function saveCurrent() {
     const body = JSON.stringify(payload());
@@ -796,6 +812,7 @@
   }
   if (!circles) circles = fallback.map(c => ({ ...c }));
   circles.forEach(clampToRect);
+  circles.forEach(c => { if (typeof c.hd !== 'number' || !isFinite(c.hd)) c.hd = HALO_DEFAULT; });
   if (!wasLoadedFromStorage) saveCurrent();
 
   // ---- build a board SVG (used for both flat and tilted views) ----
@@ -814,6 +831,7 @@
         <rect class="border" x="25" y="15" width="316" height="541"/>
         <rect class="object" x="40" y="30" width="286" height="511"/>
 
+        <g class="halos"></g>
         <g class="inner-circles"></g>
 
         <line class="ext-line" x1="40"  y1="541" x2="40"  y2="630"/>
@@ -902,6 +920,7 @@
       parentEl.insertBefore(svg, parentEl.firstChild);
     }
     const group = svg.querySelector('.inner-circles');
+    const halos = svg.querySelector('.halos');
 
     const elems = circles.map((c, idx) => {
       const fo = document.createElementNS(svgNS, 'foreignObject');
@@ -934,10 +953,14 @@
       text.textContent = 'Ø' + c.d;
       group.appendChild(text);
 
-      return { circle, text, fo, ring };
+      const halo = document.createElementNS(svgNS, 'circle');
+      halo.setAttribute('class', 'halo');
+      halos.appendChild(halo);
+
+      return { circle, text, fo, ring, halo };
     });
 
-    return { svg, group, elems, block };
+    return { svg, group, halos, elems, block };
   }
 
   const views = [
@@ -950,7 +973,7 @@
     for (const v of views) {
       for (let i = 0; i < circles.length; i++) {
         const c = circles[i];
-        const { circle, text, fo } = v.elems[i];
+        const { circle, text, fo, halo } = v.elems[i];
         circle.setAttribute('cx', c.cx);
         circle.setAttribute('cy', c.cy);
         circle.setAttribute('r', c.r);
@@ -960,6 +983,9 @@
         fo.setAttribute('y', c.cy - c.r);
         fo.setAttribute('width',  c.r * 2);
         fo.setAttribute('height', c.r * 2);
+        halo.setAttribute('cx', c.cx);
+        halo.setAttribute('cy', c.cy);
+        halo.setAttribute('r', (c.hd || 0) / 2);
       }
     }
     updateCoords();
@@ -1389,7 +1415,10 @@
     const text = document.createElementNS(svgNS, 'text');
     text.setAttribute('class', 'label'); text.textContent = 'Ø' + c.d;
     v.group.appendChild(text);
-    return { circle, text, fo, ring };
+    const halo = document.createElementNS(svgNS, 'circle');
+    halo.setAttribute('class', 'halo');
+    v.halos.appendChild(halo);
+    return { circle, text, fo, ring, halo };
   }
 
   // Keep each circle element's data-idx in sync with its array position.
@@ -1420,7 +1449,7 @@
     baseDelays.splice(idx, 1);
     for (const v of views) {
       const e = v.elems[idx];
-      e.fo.remove(); e.circle.remove(); e.text.remove();
+      e.fo.remove(); e.circle.remove(); e.text.remove(); e.halo.remove();
       v.elems.splice(idx, 1);
     }
     reindexCircles();
@@ -1443,15 +1472,34 @@
     renderCircleRows(); updateSizeButtons();
   }
 
+  // halo diameter is independent: no collision, no clamping to the frame
+  function resizeHalo(idx, delta) {
+    if (locked) return;
+    const c = circles[idx];
+    const nh = clamp(c.hd + delta, HALO_MIN, HALO_MAX);
+    if (nh === c.hd) return;
+    c.hd = nh;
+    render(); saveCurrent(); renderCircleRows();
+  }
+
   function renderCircleRows() {
     circleRowsEl.innerHTML = circles.map((c, i) =>
       `<div class="circle-row" data-idx="${i}">` +
-        `<span class="cr-d">Ø${c.d}</span>` +
-        `<span class="cr-actions">` +
-          `<button type="button" data-act="dec" aria-label="Smaller">−</button>` +
-          `<button type="button" data-act="inc" aria-label="Larger">＋</button>` +
-          `<button type="button" data-act="del" class="cr-del" aria-label="Remove">✕</button>` +
-        `</span>` +
+        `<div class="cr-line">` +
+          `<span class="cr-d">Ø${c.d}</span>` +
+          `<span class="cr-actions">` +
+            `<button type="button" data-act="dec" aria-label="Smaller circle">−</button>` +
+            `<button type="button" data-act="inc" aria-label="Larger circle">＋</button>` +
+            `<button type="button" data-act="del" class="cr-del" aria-label="Remove circle">✕</button>` +
+          `</span>` +
+        `</div>` +
+        `<div class="cr-line">` +
+          `<span class="cr-hd">halo Ø${c.hd}</span>` +
+          `<span class="cr-actions">` +
+            `<button type="button" data-act="hdec" aria-label="Smaller halo">−</button>` +
+            `<button type="button" data-act="hinc" aria-label="Larger halo">＋</button>` +
+          `</span>` +
+        `</div>` +
       `</div>`
     ).join('');
   }
@@ -1463,6 +1511,8 @@
     const act = btn.getAttribute('data-act');
     if (act === 'inc') resizeOne(idx,  SIZE_STEP);
     else if (act === 'dec') resizeOne(idx, -SIZE_STEP);
+    else if (act === 'hinc') resizeHalo(idx,  HALO_STEP);
+    else if (act === 'hdec') resizeHalo(idx, -HALO_STEP);
     else if (act === 'del') removeCircle(idx);
   });
   document.getElementById('add-circle').addEventListener('click', addCircle);
