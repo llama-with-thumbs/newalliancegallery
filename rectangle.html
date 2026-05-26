@@ -545,7 +545,7 @@
     border-radius: 50%;
     background: rgba(255, 255, 255, 0.10);
     border: 0.5px solid rgba(255, 255, 255, 0.22);
-    transform: translateZ(var(--depth));      /* extrude UP, above the table surface */
+    transform: translateZ(calc(-1 * var(--depth)));   /* extrude DOWN, like the table */
     backface-visibility: visible;
     pointer-events: none;
   }
@@ -912,7 +912,7 @@
       p.style.left   = `calc(${(-W / 2).toFixed(3)} * var(--u))`;
       p.style.top    = 'calc(-0.5 * var(--depth))';
       p.style.transform =
-        `rotateZ(${angle}deg) translate3d(0, calc(${Rh.toFixed(3)} * var(--u)), calc(0.5 * var(--depth))) rotateX(90deg)`;
+        `rotateZ(${angle}deg) translate3d(0, calc(${Rh.toFixed(3)} * var(--u)), calc(-0.5 * var(--depth))) rotateX(90deg)`;
       p.style.transformOrigin = 'center center';
       anchor.appendChild(p);
     }
