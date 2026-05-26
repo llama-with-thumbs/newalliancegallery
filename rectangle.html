@@ -101,8 +101,7 @@
     font-size: 13px;
     user-select: none;
     box-shadow: 0 4px 18px rgba(0,0,0,0.35);
-    min-width: 200px;
-    max-width: 220px;
+    width: 220px;
     z-index: 10;
     max-height: calc(100vh - 32px);
     overflow-y: auto;
@@ -228,28 +227,47 @@
   body.hide-bigcircle .cyl-back,
   body.hide-bigcircle .cyl-side { display: none; }
 
-  /* collapsible coordinates section */
-  .coords-details[open] { display: flex; flex-direction: column; gap: 8px; }
-  .coords-details > summary {
+  /* collapsible coordinates section (smooth grid-rows animation, fixed width) */
+  .coords-block { gap: 0; }
+  .coords-toggle {
     margin: 0;
+    padding: 0;
+    background: none;
+    border: 0;
+    color: inherit;
+    font: inherit;
     font-size: 11px;
     font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     opacity: 0.55;
     cursor: pointer;
-    list-style: none;
     display: flex;
     align-items: center;
     gap: 6px;
+    width: 100%;
+    text-align: left;
   }
-  .coords-details > summary::-webkit-details-marker { display: none; }
-  .coords-details > summary::before {
+  .coords-toggle::before {
     content: "\25B8";            /* ▸ */
     font-size: 9px;
-    transition: transform 0.12s ease;
+    transition: transform 0.2s ease;
   }
-  .coords-details[open] > summary::before { transform: rotate(90deg); }
+  .coords-toggle[aria-expanded="true"]::before { transform: rotate(90deg); }
+  .coords-collapse {
+    display: grid;
+    grid-template-rows: 1fr;
+    transition: grid-template-rows 0.25s ease;
+  }
+  .coords-collapse.collapsed { grid-template-rows: 0fr; }
+  .coords-inner {
+    overflow: hidden;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-top: 8px;
+  }
 
   /* ---------- two-view layout ---------- */
   .views {
@@ -449,25 +467,6 @@
   </div>
 
   <div class="control">
-    <div class="row">
-      <label for="tilt">Tilt angle</label>
-      <span class="value" id="tilt-val">48°</span>
-    </div>
-    <input type="range" id="tilt" min="0" max="80" step="1" value="48">
-  </div>
-
-  <div class="control">
-    <div class="row">
-      <label for="yaw">Rotation</label>
-      <span class="value-row">
-        <span class="value" id="yaw-val">0°</span>
-        <button class="reset-btn" id="yaw-reset" type="button" title="Reset rotation to 0°" aria-label="Reset rotation to 0 degrees">↺</button>
-      </span>
-    </div>
-    <input type="range" id="yaw" min="-180" max="180" step="1" value="0">
-  </div>
-
-  <div class="control">
     <label class="switch">
       <input type="checkbox" id="lock">
       <span class="switch-track"></span>
@@ -506,11 +505,32 @@
     </div>
   </div>
 
-  <details class="coords-details" id="coords-details" open>
-    <summary>Coordinates (mm)</summary>
-    <p class="coords-hint">Origin: bottom-left of inner rectangle. X→ right, Y↑ up.</p>
-    <div class="coords-list" id="coords-list"></div>
-  </details>
+  <div class="control coords-block">
+    <button type="button" class="coords-toggle" id="coords-toggle" aria-expanded="true">Coordinates (mm)</button>
+    <div class="coords-collapse" id="coords-collapse">
+      <div class="coords-inner">
+        <p class="coords-hint">Origin: bottom-left of inner rectangle. X→ right, Y↑ up.</p>
+        <div class="coords-list" id="coords-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="control">
+    <h2>Perspective</h2>
+    <div class="row">
+      <label for="tilt">Tilt angle</label>
+      <span class="value" id="tilt-val">48°</span>
+    </div>
+    <input type="range" id="tilt" min="0" max="80" step="1" value="48">
+    <div class="row">
+      <label for="yaw">Rotation</label>
+      <span class="value-row">
+        <span class="value" id="yaw-val">0°</span>
+        <button class="reset-btn" id="yaw-reset" type="button" title="Reset rotation to 0°" aria-label="Reset rotation to 0 degrees">↺</button>
+      </span>
+    </div>
+    <input type="range" id="yaw" min="-180" max="180" step="1" value="0">
+  </div>
 </aside>
 
 <main class="views">
@@ -1121,12 +1141,19 @@
     try { localStorage.setItem(BIG_KEY, bigShown ? '1' : '0'); } catch {}
   });
 
-  // ---- collapsible coordinates section (remembers open/closed) ----
+  // ---- collapsible coordinates section (smooth, remembers open/closed) ----
   const COORDS_OPEN_KEY = 'rect-coords-open-v1';
-  const coordsDetails = document.getElementById('coords-details');
-  if (localStorage.getItem(COORDS_OPEN_KEY) === '0') coordsDetails.removeAttribute('open');
-  coordsDetails.addEventListener('toggle', () => {
-    try { localStorage.setItem(COORDS_OPEN_KEY, coordsDetails.open ? '1' : '0'); } catch {}
+  const coordsToggle   = document.getElementById('coords-toggle');
+  const coordsCollapse = document.getElementById('coords-collapse');
+  function applyCoordsOpen(open) {
+    coordsCollapse.classList.toggle('collapsed', !open);
+    coordsToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+  applyCoordsOpen(localStorage.getItem(COORDS_OPEN_KEY) !== '0');
+  coordsToggle.addEventListener('click', () => {
+    const open = coordsCollapse.classList.contains('collapsed');   // collapsed now -> opening
+    applyCoordsOpen(open);
+    try { localStorage.setItem(COORDS_OPEN_KEY, open ? '1' : '0'); } catch {}
   });
 
   // ---- circle-size +/- buttons (apply to ALL circles) ----
