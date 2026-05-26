@@ -532,6 +532,31 @@
     border-bottom: 0.6px solid #1a1a1a;
     backface-visibility: visible;
   }
+
+  /* translucent 3D halo cylinder (perspective view); shares --depth with the table */
+  .view-tilted .halo-cyl-anchor {
+    position: absolute;
+    width: 0; height: 0;
+    transform-style: preserve-3d;
+    pointer-events: none;
+  }
+  .view-tilted .halo-cyl-back {
+    position: absolute;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.10);
+    border: 0.5px solid rgba(255, 255, 255, 0.22);
+    transform: translateZ(calc(-1 * var(--depth)));
+    backface-visibility: visible;
+    pointer-events: none;
+  }
+  .view-tilted .halo-cyl-side {
+    position: absolute;
+    background: rgba(255, 255, 255, 0.07);
+    border-top:    0.5px solid rgba(255, 255, 255, 0.16);
+    border-bottom: 0.5px solid rgba(255, 255, 255, 0.16);
+    backface-visibility: visible;
+    pointer-events: none;
+  }
   /* In the perspective view: hide all dimensions/callouts AND the
      two rectangles (border + inner rect). Big circle stays as the
      only flat surface, with a uniform monotone fill. Small animated
@@ -872,10 +897,41 @@
   const baseDurations = circles.map((_, idx) => 22 + (idx * 0.83) % 6);
   const baseDelays    = circles.map((_, idx) => -(idx * 3.7) - (idx * idx * 0.31));
 
+  // ---- translucent 3D halo cylinder (perspective view): extrudes by the shared --depth ----
+  const HALO_SIDES = 20;
+  function buildHaloSidePanels(anchor, Rh) {
+    anchor.textContent = '';
+    if (Rh <= 0) return;
+    const W = 2 * Math.PI * Rh / HALO_SIDES + 0.6;   // arc length + slight overlap
+    for (let i = 0; i < HALO_SIDES; i++) {
+      const angle = (i * 360 / HALO_SIDES).toFixed(3);
+      const p = document.createElement('div');
+      p.className = 'halo-cyl-side';
+      p.style.width  = `calc(${W.toFixed(3)} * var(--u))`;
+      p.style.height = 'var(--depth)';
+      p.style.left   = `calc(${(-W / 2).toFixed(3)} * var(--u))`;
+      p.style.top    = 'calc(-0.5 * var(--depth))';
+      p.style.transform =
+        `rotateZ(${angle}deg) translate3d(0, calc(${Rh.toFixed(3)} * var(--u)), calc(-0.5 * var(--depth))) rotateX(90deg)`;
+      p.style.transformOrigin = 'center center';
+      anchor.appendChild(p);
+    }
+  }
+  function buildHaloCyl(host, c) {
+    const back = document.createElement('div');
+    back.className = 'halo-cyl-back';
+    const anchor = document.createElement('div');
+    anchor.className = 'halo-cyl-anchor';
+    buildHaloSidePanels(anchor, (c.hd || 0) / 2);
+    host.appendChild(back);
+    host.appendChild(anchor);
+    return { back, anchor };
+  }
+
   // Create one view: build the SVG, populate the inner-circles group with elements
   function createView(viewName, parentEl) {
     const svg = buildBoardSvg(viewName);
-    let block = null;
+    let block = null, haloHost = null;
     if (viewName === 'tilted') {
       // Two nested 3D wrappers:
       //   .block-3d    -> rotateX (tilt), pivot at center or bottom (per tab)
@@ -884,6 +940,7 @@
       block.className = 'block-3d';
       const rotateZ = document.createElement('div');
       rotateZ.className = 'rotate-z';
+      haloHost = rotateZ;             // halo cylinders live alongside the table cylinder
 
       // Cylinder back face (Ø 666.54 at z = -depth)
       const cylBack = document.createElement('div');
@@ -965,10 +1022,16 @@
       halo.setAttribute('class', 'halo');
       halos.appendChild(halo);
 
-      return { circle, text, fo, ring, halo };
+      let haloBack = null, haloAnchor = null;
+      if (haloHost) {
+        const cyl = buildHaloCyl(haloHost, c);
+        haloBack = cyl.back; haloAnchor = cyl.anchor;
+      }
+
+      return { circle, text, fo, ring, halo, haloBack, haloAnchor };
     });
 
-    return { svg, group, halos, elems, block };
+    return { svg, group, halos, haloHost, elems, block };
   }
 
   const views = [
@@ -994,6 +1057,17 @@
         halo.setAttribute('cx', c.cx);
         halo.setAttribute('cy', c.cy);
         halo.setAttribute('r', (c.hd || 0) / 2);
+        const e = v.elems[i];
+        if (e.haloBack) {
+          // viewBox (cx,cy) -> 3D container coords: + (160, 85)  (viewBox origin -160,-85)
+          const Rh = (c.hd || 0) / 2, cxC = c.cx + 160, cyC = c.cy + 85;
+          e.haloBack.style.left   = `calc(${(cxC - Rh).toFixed(3)} * var(--u))`;
+          e.haloBack.style.top    = `calc(${(cyC - Rh).toFixed(3)} * var(--u))`;
+          e.haloBack.style.width  = `calc(${(2 * Rh).toFixed(3)} * var(--u))`;
+          e.haloBack.style.height = `calc(${(2 * Rh).toFixed(3)} * var(--u))`;
+          e.haloAnchor.style.left = `calc(${cxC.toFixed(3)} * var(--u))`;
+          e.haloAnchor.style.top  = `calc(${cyC.toFixed(3)} * var(--u))`;
+        }
       }
     }
     updateCoords();
@@ -1426,7 +1500,12 @@
     const halo = document.createElementNS(svgNS, 'circle');
     halo.setAttribute('class', 'halo');
     v.halos.appendChild(halo);
-    return { circle, text, fo, ring, halo };
+    let haloBack = null, haloAnchor = null;
+    if (v.haloHost) {
+      const cyl = buildHaloCyl(v.haloHost, c);
+      haloBack = cyl.back; haloAnchor = cyl.anchor;
+    }
+    return { circle, text, fo, ring, halo, haloBack, haloAnchor };
   }
 
   // Keep each circle element's data-idx in sync with its array position.
@@ -1458,6 +1537,8 @@
     for (const v of views) {
       const e = v.elems[idx];
       e.fo.remove(); e.circle.remove(); e.text.remove(); e.halo.remove();
+      if (e.haloBack) e.haloBack.remove();
+      if (e.haloAnchor) e.haloAnchor.remove();
       v.elems.splice(idx, 1);
     }
     reindexCircles();
@@ -1487,6 +1568,8 @@
     const nh = clamp(c.hd + delta, HALO_MIN, HALO_MAX);
     if (nh === c.hd) return;
     c.hd = nh;
+    const te = views[1] && views[1].elems[idx];   // rebuild 3D side panels for the new radius
+    if (te && te.haloAnchor) buildHaloSidePanels(te.haloAnchor, c.hd / 2);
     render(); saveCurrent(); renderCircleRows();
   }
 
