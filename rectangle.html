@@ -88,9 +88,6 @@
 
   /* ---------- left controls panel ---------- */
   .controls {
-    margin: 16px;
-    align-self: center;
-    flex-shrink: 0;
     background: rgba(34, 34, 34, 0.88);
     color: #fff;
     padding: 16px 18px;
@@ -102,10 +99,93 @@
     user-select: none;
     box-shadow: 0 4px 18px rgba(0,0,0,0.35);
     width: 220px;
-    z-index: 10;
     max-height: calc(100vh - 32px);
     overflow-y: auto;
   }
+
+  /* dock wraps the controls so the circles flyout can anchor to its right */
+  .controls-dock {
+    position: relative;
+    align-self: center;
+    flex-shrink: 0;
+    margin: 16px;
+    z-index: 10;
+  }
+  .panel-toggle {
+    width: 100%;
+    background: #444;
+    color: #fff;
+    border: 1px solid #666;
+    border-radius: 6px;
+    padding: 9px 0;
+    font-family: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.12s ease;
+  }
+  .panel-toggle:hover { background: #555; }
+  .panel-toggle[aria-expanded="true"] { background: #4caf82; border-color: #4caf82; }
+
+  /* circles flyout: slides out to the right from behind the controls */
+  .circles-panel {
+    position: absolute;
+    top: 0;
+    left: 100%;
+    width: 230px;
+    box-sizing: border-box;
+    background: rgba(34, 34, 34, 0.92);
+    color: #fff;
+    padding: 16px 18px;
+    border-radius: 10px;
+    box-shadow: 0 4px 18px rgba(0,0,0,0.35);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    font-size: 13px;
+    user-select: none;
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
+    z-index: -1;                 /* tucked behind controls when closed */
+    opacity: 0;
+    transform: translateX(-24px) scale(0.97);
+    transform-origin: left center;
+    visibility: hidden;
+    transition: opacity 0.22s ease, transform 0.22s ease,
+                visibility 0s linear 0.22s, z-index 0s linear 0.22s;
+  }
+  .circles-panel.open {
+    z-index: 1;
+    opacity: 1;
+    transform: translateX(10px);
+    visibility: visible;
+    transition: opacity 0.22s ease, transform 0.22s ease;
+  }
+  .cp-head { display: flex; align-items: center; justify-content: space-between; }
+  .circles-panel h2 {
+    margin: 0; font-size: 11px; font-weight: 600; letter-spacing: 0.08em;
+    text-transform: uppercase; opacity: 0.55;
+  }
+  .add-circle-btn {
+    width: 100%; background: #2e7d52; color: #fff; border: 1px solid #4caf82;
+    border-radius: 6px; padding: 9px 0; font-family: inherit; font-size: 13px;
+    cursor: pointer; transition: background 0.12s ease;
+  }
+  .add-circle-btn:hover { background: #4caf82; }
+  .circle-rows { display: flex; flex-direction: column; gap: 6px; }
+  .circle-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    background: rgba(255,255,255,0.06); border-radius: 6px; padding: 5px 6px 5px 10px;
+  }
+  .cr-d { font-variant-numeric: tabular-nums; opacity: 0.85; }
+  .cr-actions { display: flex; gap: 4px; }
+  .cr-actions button {
+    width: 24px; height: 24px; padding: 0; background: #444; color: #fff;
+    border: 1px solid #666; border-radius: 4px; cursor: pointer;
+    font-family: inherit; font-size: 13px; line-height: 1;
+  }
+  .cr-actions button:hover { background: #555; }
+  .cr-actions .cr-del { border-color: #a44; }
+  .cr-actions .cr-del:hover { background: #a44; }
   .controls h2 {
     margin: 0 0 4px 0;
     font-size: 11px;
@@ -455,6 +535,7 @@
 </head>
 <body>
 
+<div class="controls-dock">
 <aside class="controls">
   <h2>Controls</h2>
 
@@ -531,7 +612,21 @@
     </div>
     <input type="range" id="yaw" min="-180" max="180" step="1" value="0">
   </div>
+
+  <div class="control">
+    <button type="button" class="panel-toggle" id="circles-toggle" aria-expanded="false">✛ Add / edit circles</button>
+  </div>
 </aside>
+
+<aside class="circles-panel" id="circles-panel" aria-label="Add and edit circles">
+  <div class="cp-head">
+    <h2>Circles</h2>
+    <button type="button" class="reset-btn" id="circles-close" title="Close" aria-label="Close circles panel">×</button>
+  </div>
+  <button type="button" class="add-circle-btn" id="add-circle">＋ Add circle</button>
+  <div class="circle-rows" id="circle-rows"></div>
+</aside>
+</div>
 
 <main class="views">
   <div class="view view-flat"   data-view="flat"  ><span class="view-label" style="order:2">Top-down blueprint</span></div>
@@ -639,7 +734,7 @@
 
   // ---- persistence ----
   function validate(data) {
-    if (!Array.isArray(data) || data.length !== diameters.length) return null;
+    if (!Array.isArray(data) || data.length < 1 || data.length > 200) return null;
     for (const c of data) {
       if (typeof c.d !== 'number' || !isFinite(c.d) || c.d < 20 || c.d > 400) return null;
       if (typeof c.cx !== 'number' || !isFinite(c.cx)) return null;
@@ -1253,6 +1348,133 @@
       tabFrame.classList.toggle('is-sculpture', sculptureMode);
     });
   });
+
+  // ---- add / edit circles panel ----
+  const NEW_CIRCLE_D  = 100;                // default diameter (mm) for a new circle
+  const circlesPanel  = document.getElementById('circles-panel');
+  const circlesToggle = document.getElementById('circles-toggle');
+  const circleRowsEl  = document.getElementById('circle-rows');
+
+  // Find a random, non-overlapping spot for a new circle (same physics as the layout).
+  function placeNewCircle(d) {
+    const r = d / 2;
+    for (let i = 0; i < 6000; i++) {
+      const cx = rectX + r + Math.random() * (rectW - 2 * r);
+      const cy = rectY + r + Math.random() * (rectH - 2 * r);
+      const ok = circles.every(c => {
+        const dx = cx - c.cx, dy = cy - c.cy, need = c.r + r + minGap;
+        return dx * dx + dy * dy >= need * need;
+      });
+      if (ok) return { d, r, cx, cy };
+    }
+    // no free gap found: drop in the centre and let resolve() push things apart
+    return { d, r, cx: rectX + rectW / 2, cy: rectY + rectH / 2 };
+  }
+
+  // Build one circle's DOM in a given view (mirrors createView's per-circle creation).
+  function makeCircleElems(v, c, idx) {
+    const fo = document.createElementNS(svgNS, 'foreignObject');
+    fo.setAttribute('pointer-events', 'none');
+    v.group.appendChild(fo);
+    const clip = document.createElement('div'); clip.className = 'oil-clip';
+    const ring = document.createElement('div'); ring.className = 'oil-ring';
+    ring.style.setProperty('--pr', `${1.5 * c.d}px`);
+    ring.style.animation = `oilShift ${baseDurations[idx]}s linear infinite`;
+    ring.style.animationDelay = `${baseDelays[idx]}s`;
+    const gloss = document.createElement('div'); gloss.className = 'oil-gloss';
+    clip.appendChild(ring); clip.appendChild(gloss); fo.appendChild(clip);
+    const circle = document.createElementNS(svgNS, 'circle');
+    circle.setAttribute('class', 'inner-c'); circle.setAttribute('data-idx', idx);
+    v.group.appendChild(circle);
+    const text = document.createElementNS(svgNS, 'text');
+    text.setAttribute('class', 'label'); text.textContent = 'Ø' + c.d;
+    v.group.appendChild(text);
+    return { circle, text, fo, ring };
+  }
+
+  // Keep each circle element's data-idx in sync with its array position.
+  function reindexCircles() {
+    for (const v of views)
+      for (let i = 0; i < v.elems.length; i++)
+        v.elems[i].circle.setAttribute('data-idx', i);
+  }
+
+  function addCircle() {
+    if (locked) return;
+    const idx = circles.length;
+    const c = placeNewCircle(NEW_CIRCLE_D);
+    circles.push(c);
+    baseDurations.push(22 + (idx * 0.83) % 6);
+    baseDelays.push(-(idx * 3.7) - (idx * idx * 0.31));
+    for (const v of views) v.elems.push(makeCircleElems(v, c, idx));
+    applySpeed(parseFloat(speedSlider.value) || 1);   // match current flow speed
+    resolve(-1); render(); saveCurrent();
+    renderCircleRows(); updateSizeButtons();
+  }
+
+  function removeCircle(idx) {
+    if (locked) return;
+    if (idx < 0 || idx >= circles.length || circles.length <= 1) return;
+    circles.splice(idx, 1);
+    baseDurations.splice(idx, 1);
+    baseDelays.splice(idx, 1);
+    for (const v of views) {
+      const e = v.elems[idx];
+      e.fo.remove(); e.circle.remove(); e.text.remove();
+      v.elems.splice(idx, 1);
+    }
+    reindexCircles();
+    resolve(-1); render(); saveCurrent();
+    renderCircleRows(); updateSizeButtons();
+  }
+
+  function resizeOne(idx, delta) {
+    if (locked) return;
+    const c = circles[idx];
+    const nd = clamp(c.d + delta, SIZE_MIN, SIZE_MAX);
+    if (nd === c.d) return;
+    c.d = nd; c.r = nd / 2;
+    for (const v of views) {
+      v.elems[idx].ring.style.setProperty('--pr', `${1.5 * c.d}px`);
+      v.elems[idx].text.textContent = 'Ø' + c.d;
+    }
+    clampToRect(c);
+    resolve(-1); render(); saveCurrent();
+    renderCircleRows(); updateSizeButtons();
+  }
+
+  function renderCircleRows() {
+    circleRowsEl.innerHTML = circles.map((c, i) =>
+      `<div class="circle-row" data-idx="${i}">` +
+        `<span class="cr-d">Ø${c.d}</span>` +
+        `<span class="cr-actions">` +
+          `<button type="button" data-act="dec" aria-label="Smaller">−</button>` +
+          `<button type="button" data-act="inc" aria-label="Larger">＋</button>` +
+          `<button type="button" data-act="del" class="cr-del" aria-label="Remove">✕</button>` +
+        `</span>` +
+      `</div>`
+    ).join('');
+  }
+
+  circleRowsEl.addEventListener('click', (ev) => {
+    const btn = ev.target.closest('button'); if (!btn) return;
+    const row = ev.target.closest('.circle-row'); if (!row) return;
+    const idx = parseInt(row.getAttribute('data-idx'), 10);
+    const act = btn.getAttribute('data-act');
+    if (act === 'inc') resizeOne(idx,  SIZE_STEP);
+    else if (act === 'dec') resizeOne(idx, -SIZE_STEP);
+    else if (act === 'del') removeCircle(idx);
+  });
+  document.getElementById('add-circle').addEventListener('click', addCircle);
+  circlesToggle.addEventListener('click', () => {
+    const open = circlesPanel.classList.toggle('open');
+    circlesToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+  document.getElementById('circles-close').addEventListener('click', () => {
+    circlesPanel.classList.remove('open');
+    circlesToggle.setAttribute('aria-expanded', 'false');
+  });
+  renderCircleRows();
 })();
 </script>
 
