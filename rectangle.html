@@ -41,6 +41,9 @@
     pointer-events: none;
   }
 
+  /* hovering a panel row emphasises the matching circle in the blueprint */
+  .inner-c.emph { stroke: #19e6ff; stroke-width: 5; }
+
   .ext-line  { stroke: #000; stroke-width: 0.25; }
   .dim-line  { stroke: #000; stroke-width: 0.25; }
   .dim-text  { font-size: 14px; fill: #000; text-anchor: middle; dominant-baseline: middle; }
@@ -134,10 +137,13 @@
   .panel-toggle:hover { background: #555; }
   .panel-toggle[aria-expanded="true"] { background: #4caf82; border-color: #4caf82; }
 
-  /* circles flyout: slides out to the right from behind the controls */
+  /* the flat (blueprint) view anchors the circles flyout to its right */
+  .view-flat { position: relative; }
+
+  /* circles flyout: slides out to the right of the top-down blueprint */
   .circles-panel {
     position: absolute;
-    top: 0;
+    top: 16px;
     left: 100%;
     width: 230px;
     box-sizing: border-box;
@@ -187,6 +193,7 @@
   .cr-line { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .cr-d { font-variant-numeric: tabular-nums; opacity: 0.9; }
   .cr-hd { font-variant-numeric: tabular-nums; opacity: 0.5; font-size: 11px; }
+  .circle-row:hover { background: rgba(25, 230, 255, 0.16); }
   .cr-actions { display: flex; gap: 4px; }
   .cr-actions button {
     width: 24px; height: 24px; padding: 0; background: #444; color: #fff;
@@ -627,19 +634,20 @@
     <button type="button" class="panel-toggle" id="circles-toggle" aria-expanded="false">✛ Add / edit circles</button>
   </div>
 </aside>
-
-<aside class="circles-panel" id="circles-panel" aria-label="Add and edit circles">
-  <div class="cp-head">
-    <h2>Circles</h2>
-    <button type="button" class="reset-btn" id="circles-close" title="Close" aria-label="Close circles panel">×</button>
-  </div>
-  <button type="button" class="add-circle-btn" id="add-circle">＋ Add circle</button>
-  <div class="circle-rows" id="circle-rows"></div>
-</aside>
 </div>
 
 <main class="views">
-  <div class="view view-flat"   data-view="flat"  ><span class="view-label" style="order:2">Top-down blueprint</span></div>
+  <div class="view view-flat"   data-view="flat"  >
+    <span class="view-label" style="order:2">Top-down blueprint</span>
+    <aside class="circles-panel" id="circles-panel" aria-label="Add and edit circles">
+      <div class="cp-head">
+        <h2>Circles</h2>
+        <button type="button" class="reset-btn" id="circles-close" title="Close" aria-label="Close circles panel">×</button>
+      </div>
+      <button type="button" class="add-circle-btn" id="add-circle">＋ Add circle</button>
+      <div class="circle-rows" id="circle-rows"></div>
+    </aside>
+  </div>
   <div class="view view-tilted" data-view="tilted">
     <div class="tab-frame">
       <div class="tab-bar" role="tablist">
@@ -1515,6 +1523,21 @@
     else if (act === 'hdec') resizeHalo(idx, -HALO_STEP);
     else if (act === 'del') removeCircle(idx);
   });
+  // hover a row -> emphasise that circle in the top-down blueprint (flat view)
+  let emphIdx = -1;
+  function emphasize(idx) {
+    if (idx === emphIdx) return;
+    const flat = views[0];
+    if (emphIdx >= 0 && flat.elems[emphIdx]) flat.elems[emphIdx].circle.classList.remove('emph');
+    emphIdx = idx;
+    if (idx >= 0 && flat.elems[idx]) flat.elems[idx].circle.classList.add('emph');
+  }
+  circleRowsEl.addEventListener('mousemove', (ev) => {
+    const row = ev.target.closest('.circle-row');
+    emphasize(row ? parseInt(row.getAttribute('data-idx'), 10) : -1);
+  });
+  circleRowsEl.addEventListener('mouseleave', () => emphasize(-1));
+
   document.getElementById('add-circle').addEventListener('click', addCircle);
   circlesToggle.addEventListener('click', () => {
     const open = circlesPanel.classList.toggle('open');
