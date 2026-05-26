@@ -223,6 +223,34 @@
     line-height: 1.3;
   }
 
+  /* hide the big table circle across ALL projections (toggled by the switch) */
+  body.hide-bigcircle .circle-bg,
+  body.hide-bigcircle .cyl-back,
+  body.hide-bigcircle .cyl-side { display: none; }
+
+  /* collapsible coordinates section */
+  .coords-details[open] { display: flex; flex-direction: column; gap: 8px; }
+  .coords-details > summary {
+    margin: 0;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    opacity: 0.55;
+    cursor: pointer;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .coords-details > summary::-webkit-details-marker { display: none; }
+  .coords-details > summary::before {
+    content: "\25B8";            /* ▸ */
+    font-size: 9px;
+    transition: transform 0.12s ease;
+  }
+  .coords-details[open] > summary::before { transform: rotate(90deg); }
+
   /* ---------- two-view layout ---------- */
   .views {
     flex: 1;
@@ -448,6 +476,14 @@
   </div>
 
   <div class="control">
+    <label class="switch">
+      <input type="checkbox" id="bigcircle" checked>
+      <span class="switch-track"></span>
+      <span>Show big circle</span>
+    </label>
+  </div>
+
+  <div class="control">
     <h2>Circle sizes</h2>
     <div class="step-buttons">
       <button id="size-down" type="button"
@@ -470,11 +506,11 @@
     </div>
   </div>
 
-  <div class="control">
-    <h2>Coordinates (mm)</h2>
+  <details class="coords-details" id="coords-details" open>
+    <summary>Coordinates (mm)</summary>
     <p class="coords-hint">Origin: bottom-left of inner rectangle. X→ right, Y↑ up.</p>
     <div class="coords-list" id="coords-list"></div>
-  </div>
+  </details>
 </aside>
 
 <main class="views">
@@ -1068,6 +1104,29 @@
     applyLock();
     try { localStorage.setItem(LOCK_KEY, locked ? '1' : '0'); } catch {}
     if (locked) saveCurrent();
+  });
+
+  // ---- big-circle switch (hides the table disc/cylinder in ALL views at once) ----
+  const BIG_KEY = 'rect-bigcircle-v1';
+  const bigSwitch = document.getElementById('bigcircle');
+  let bigShown = localStorage.getItem(BIG_KEY) !== '0';   // shown unless explicitly turned off
+  function applyBig() {
+    document.body.classList.toggle('hide-bigcircle', !bigShown);
+    bigSwitch.checked = bigShown;
+  }
+  applyBig();
+  bigSwitch.addEventListener('change', () => {
+    bigShown = bigSwitch.checked;
+    applyBig();
+    try { localStorage.setItem(BIG_KEY, bigShown ? '1' : '0'); } catch {}
+  });
+
+  // ---- collapsible coordinates section (remembers open/closed) ----
+  const COORDS_OPEN_KEY = 'rect-coords-open-v1';
+  const coordsDetails = document.getElementById('coords-details');
+  if (localStorage.getItem(COORDS_OPEN_KEY) === '0') coordsDetails.removeAttribute('open');
+  coordsDetails.addEventListener('toggle', () => {
+    try { localStorage.setItem(COORDS_OPEN_KEY, coordsDetails.open ? '1' : '0'); } catch {}
   });
 
   // ---- circle-size +/- buttons (apply to ALL circles) ----
