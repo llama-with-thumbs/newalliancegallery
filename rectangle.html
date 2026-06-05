@@ -486,7 +486,7 @@
     inset: 0;
     transform-style: preserve-3d;
     transform: rotateZ(var(--yaw));
-    transform-origin: 47.6389% 49.7315%;
+    transform-origin: 47.7778% 49.7987%;
   }
   .view-tilted svg.board {
     position: absolute;
@@ -502,8 +502,8 @@
      (viewBox starts at -160,-85): (343, 370.5). */
   .view-tilted .cyl-back {
     position: absolute;
-    left:  calc((343 - 333.27) * var(--u));
-    top:   calc((370.5 - 333.27) * var(--u));
+    left:  calc((344 - 333.27) * var(--u));
+    top:   calc((371 - 333.27) * var(--u));
     width:  calc(2 * var(--r-big));
     height: calc(2 * var(--r-big));
     border-radius: 50%;
@@ -517,8 +517,8 @@
   }
   .view-tilted .cyl-anchor {
     position: absolute;
-    left: calc(343 * var(--u));
-    top:  calc(370.5 * var(--u));
+    left: calc(344 * var(--u));
+    top:  calc(371 * var(--u));
     width: 0;
     height: 0;
     transform-style: preserve-3d;
@@ -709,7 +709,7 @@
   // Whether the right view's "Sculpture Group" tab is active. Affects
   // the perspective view's rotation pivot (and thus the drag math).
   let sculptureMode = false;
-  const rectX = 40, rectY = 30, rectW = 286, rectH = 511;
+  const rectX = 40, rectY = 30, rectW = 288, rectH = 512;
   const minGap = 10;
   const diameters = [100, 105, 110, 115, 120, 130, 140, 150];
   // translucent halo around each circle (independent diameter; may overlap and exceed the frame)
@@ -866,28 +866,28 @@
           </marker>
         </defs>
 
-        <circle class="circle-bg" cx="183" cy="285.5" r="333.27"/>
-        <rect class="border" x="25" y="15" width="316" height="541"/>
-        <rect class="object" x="40" y="30" width="286" height="511"/>
+        <circle class="circle-bg" cx="184" cy="286" r="333.27"/>
+        <rect class="border" x="25" y="15" width="318" height="542"/>
+        <rect class="object" x="40" y="30" width="288" height="512"/>
 
         <g class="halos"></g>
         <g class="inner-circles"></g>
 
-        <line class="ext-line" x1="40"  y1="541" x2="40"  y2="630"/>
-        <line class="ext-line" x1="326" y1="541" x2="326" y2="630"/>
-        <line class="dim-line" x1="40" y1="623" x2="326" y2="623"
+        <line class="ext-line" x1="40"  y1="542" x2="40"  y2="630"/>
+        <line class="ext-line" x1="328" y1="542" x2="328" y2="630"/>
+        <line class="dim-line" x1="40" y1="623" x2="328" y2="623"
               marker-start="url(#${arrowId})" marker-end="url(#${arrowId})"/>
-        <text class="dim-text" x="183" y="615">286 mm</text>
+        <text class="dim-text" x="184" y="615">288 mm</text>
 
-        <line class="ext-line" x1="326" y1="30"  x2="535" y2="30"/>
-        <line class="ext-line" x1="326" y1="541" x2="535" y2="541"/>
-        <line class="dim-line" x1="528" y1="30" x2="528" y2="541"
+        <line class="ext-line" x1="328" y1="30"  x2="535" y2="30"/>
+        <line class="ext-line" x1="328" y1="542" x2="535" y2="542"/>
+        <line class="dim-line" x1="528" y1="30" x2="528" y2="542"
               marker-start="url(#${arrowId})" marker-end="url(#${arrowId})"/>
-        <g transform="translate(520, 285.5) rotate(-90)">
-          <text class="dim-text" x="0" y="0">511 mm</text>
+        <g transform="translate(520, 286) rotate(-90)">
+          <text class="dim-text" x="0" y="0">512 mm</text>
         </g>
 
-        <line class="dim-line" x1="480" y1="-50" x2="418.66" y2="49.84" marker-end="url(#${arrowId})"/>
+        <line class="dim-line" x1="480" y1="-50" x2="419.66" y2="50.34" marker-end="url(#${arrowId})"/>
         <text class="dim-text" x="480" y="-62">Ø 667 mm</text>
 
         <line class="dim-line" x1="-105" y1="-50" x2="32" y2="22.5" marker-end="url(#${arrowId})"/>
@@ -1185,8 +1185,8 @@
 
     // ---- Step 2: Q is in CSS pixels; undo rotateZ (inner) around C ----
     // C = table center in CSS pixels (343/720 horizontally, 370.5/745 vertically)
-    const Cx = naturalW * (343 / 720);
-    const Cy = naturalH * (370.5 / 745);
+    const Cx = naturalW * (344 / 720);
+    const Cy = naturalH * (371 / 745);
     // Q = q + O. Then P = R_z(-spin)(Q - C) + C.
     const dQx = qx + Ox - Cx;
     const dQy = qy + Oy - Cy;

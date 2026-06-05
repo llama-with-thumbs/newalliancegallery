@@ -7,9 +7,7 @@
 <style>
   html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
   /* Natural (portrait) orientation; the kiosk display applies its own 90 deg rotation. */
-  /* 5 px black inset on the long side (bottom, in portrait): canvas is 5 px shorter */
-  body { padding-bottom: 5px; box-sizing: border-box; }
-  canvas#gl { display: block; width: 100vw; height: calc(100vh - 5px); background: #000; }
+  canvas#gl { display: block; width: 100vw; height: 100vh; background: #000; }
 </style>
 </head>
 <body>
@@ -21,8 +19,8 @@
   const COORDS_URL = './coords.json';   // same file the editor's server writes
   const POLL_MS    = 3000;
   const MAX        = 32;                 // shader circle capacity
-  // World view = the inner rectangle (40,30,286,511) exactly, no padding (edge-to-edge).
-  const VB = { x: 40, y: 30, w: 286, h: 511 };
+  // World view = the inner rectangle (40,30,288,512) -- exact 9:16, matches a 1080x1920 screen perfectly.
+  const VB = { x: 40, y: 30, w: 288, h: 512 };
 
   const canvas = document.getElementById('gl');
   const gl = canvas.getContext('webgl', { antialias: true, alpha: false, premultipliedAlpha: false });
@@ -182,7 +180,7 @@
     const w = Math.floor(canvas.clientWidth*dpr), h = Math.floor(canvas.clientHeight*dpr);
     if (canvas.width!==w || canvas.height!==h){ canvas.width=w; canvas.height=h; gl.viewport(0,0,w,h); }
 
-    const scale = Math.max(w/VB.w, h/VB.h);   // cover-fit: fill the viewport, no letterbox
+    const scale = Math.min(w/VB.w, h/VB.h);   // contain-fit: aspect matches screen exactly, no crop
     const ox = (w - VB.w*scale)/2, oy = (h - VB.h*scale)/2;
 
     const T = performance.now()/1000;
