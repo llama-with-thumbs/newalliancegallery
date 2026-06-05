@@ -19,8 +19,8 @@
   const COORDS_URL = './coords.json';   // same file the editor's server writes
   const POLL_MS    = 3000;
   const MAX        = 32;                 // shader circle capacity
-  // World view = the inner rectangle (40,30,286,511) padded by 10mm of black.
-  const VB = { x: 30, y: 20, w: 306, h: 531 };
+  // World view = the inner rectangle (40,30,512,288) padded by 10mm of black (16:9 landscape).
+  const VB = { x: 30, y: 20, w: 532, h: 308 };
 
   const canvas = document.getElementById('gl');
   const gl = canvas.getContext('webgl', { antialias: true, alpha: false, premultipliedAlpha: false });
