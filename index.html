@@ -7,8 +7,8 @@
 <style>
   html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
   /* Natural (portrait) orientation; the kiosk display applies its own 90 deg rotation. */
-  /* 5 px black inset on the long side (top, in portrait): canvas is 5 px shorter */
-  body { padding-top: 5px; box-sizing: border-box; }
+  /* 5 px black inset on the long side (bottom, in portrait): canvas is 5 px shorter */
+  body { padding-bottom: 5px; box-sizing: border-box; }
   canvas#gl { display: block; width: 100vw; height: calc(100vh - 5px); background: #000; }
 </style>
 </head>
