@@ -470,11 +470,11 @@
   .view-tilted .block-3d {
     position: relative;
     height: 88vh;
-    aspect-ratio: 880 / 760;
+    aspect-ratio: 720 / 745;
     transform-style: preserve-3d;
     transform: rotateX(var(--tilt));
     transform-origin: 50% 50%;
-    --u: calc(88vh / 760);
+    --u: calc(88vh / 745);
     --depth-mm: 100;                            /* table thickness in mm */
     --depth: calc(var(--depth-mm) * var(--u));
     --r-big: calc(333.27 * var(--u));           /* big circle radius */
@@ -486,7 +486,7 @@
     inset: 0;
     transform-style: preserve-3d;
     transform: rotateZ(var(--yaw));
-    transform-origin: 51.8182% 46.5789%;
+    transform-origin: 47.6389% 49.7315%;
   }
   .view-tilted svg.board {
     position: absolute;
@@ -502,8 +502,8 @@
      (viewBox starts at -160,-85): (343, 370.5). */
   .view-tilted .cyl-back {
     position: absolute;
-    left:  calc((456 - 333.27) * var(--u));
-    top:   calc((354 - 333.27) * var(--u));
+    left:  calc((343 - 333.27) * var(--u));
+    top:   calc((370.5 - 333.27) * var(--u));
     width:  calc(2 * var(--r-big));
     height: calc(2 * var(--r-big));
     border-radius: 50%;
@@ -517,8 +517,8 @@
   }
   .view-tilted .cyl-anchor {
     position: absolute;
-    left: calc(456 * var(--u));
-    top:  calc(354 * var(--u));
+    left: calc(343 * var(--u));
+    top:  calc(370.5 * var(--u));
     width: 0;
     height: 0;
     transform-style: preserve-3d;
@@ -709,7 +709,7 @@
   // Whether the right view's "Sculpture Group" tab is active. Affects
   // the perspective view's rotation pivot (and thus the drag math).
   let sculptureMode = false;
-  const rectX = 40, rectY = 30, rectW = 512, rectH = 288;
+  const rectX = 40, rectY = 30, rectW = 286, rectH = 511;
   const minGap = 10;
   const diameters = [100, 105, 110, 115, 120, 130, 140, 150];
   // translucent halo around each circle (independent diameter; may overlap and exceed the frame)
@@ -858,7 +858,7 @@
   function buildBoardSvg(viewName) {
     const arrowId = `arrow-${viewName}`;
     const svgHTML = `
-      <svg class="board" data-view="${viewName}" viewBox="-160 -180 880 760" xmlns="http://www.w3.org/2000/svg">
+      <svg class="board" data-view="${viewName}" viewBox="-160 -85 720 745" xmlns="http://www.w3.org/2000/svg">
         <defs>
           <marker id="${arrowId}" viewBox="0 0 10 10" refX="10" refY="5"
                   markerWidth="6" markerHeight="6" orient="auto-start-reverse">
@@ -866,29 +866,29 @@
           </marker>
         </defs>
 
-        <circle class="circle-bg" cx="296" cy="174" r="333.27"/>
-        <rect class="border" x="25" y="15" width="542" height="318"/>
-        <rect class="object" x="40" y="30" width="512" height="288"/>
+        <circle class="circle-bg" cx="183" cy="285.5" r="333.27"/>
+        <rect class="border" x="25" y="15" width="316" height="541"/>
+        <rect class="object" x="40" y="30" width="286" height="511"/>
 
         <g class="halos"></g>
         <g class="inner-circles"></g>
 
-        <line class="ext-line" x1="40"  y1="318" x2="40"  y2="545"/>
-        <line class="ext-line" x1="552" y1="318" x2="552" y2="545"/>
-        <line class="dim-line" x1="40" y1="540" x2="552" y2="540"
+        <line class="ext-line" x1="40"  y1="541" x2="40"  y2="630"/>
+        <line class="ext-line" x1="326" y1="541" x2="326" y2="630"/>
+        <line class="dim-line" x1="40" y1="623" x2="326" y2="623"
               marker-start="url(#${arrowId})" marker-end="url(#${arrowId})"/>
-        <text class="dim-text" x="296" y="532">512 mm</text>
+        <text class="dim-text" x="183" y="615">286 mm</text>
 
-        <line class="ext-line" x1="552" y1="30"  x2="650" y2="30"/>
-        <line class="ext-line" x1="552" y1="318" x2="650" y2="318"/>
-        <line class="dim-line" x1="645" y1="30" x2="645" y2="318"
+        <line class="ext-line" x1="326" y1="30"  x2="535" y2="30"/>
+        <line class="ext-line" x1="326" y1="541" x2="535" y2="541"/>
+        <line class="dim-line" x1="528" y1="30" x2="528" y2="541"
               marker-start="url(#${arrowId})" marker-end="url(#${arrowId})"/>
-        <g transform="translate(637, 174) rotate(-90)">
-          <text class="dim-text" x="0" y="0">288 mm</text>
+        <g transform="translate(520, 285.5) rotate(-90)">
+          <text class="dim-text" x="0" y="0">511 mm</text>
         </g>
 
-        <line class="dim-line" x1="650" y1="-110" x2="531.66" y2="-61.66" marker-end="url(#${arrowId})"/>
-        <text class="dim-text" x="650" y="-122">Ø 667 mm</text>
+        <line class="dim-line" x1="480" y1="-50" x2="418.66" y2="49.84" marker-end="url(#${arrowId})"/>
+        <text class="dim-text" x="480" y="-62">Ø 667 mm</text>
 
         <line class="dim-line" x1="-105" y1="-50" x2="32" y2="22.5" marker-end="url(#${arrowId})"/>
         <text class="dim-text" x="-105" y="-62">15 mm</text>
@@ -1066,7 +1066,7 @@
         const e = v.elems[i];
         if (e.haloBack) {
           // viewBox (cx,cy) -> 3D container coords: + (160, 85)  (viewBox origin -160,-85)
-          const Rh = (c.hd || 0) / 2, cxC = c.cx + 160, cyC = c.cy + 180;
+          const Rh = (c.hd || 0) / 2, cxC = c.cx + 160, cyC = c.cy + 85;
           e.haloBack.style.left   = `calc(${(cxC - Rh).toFixed(3)} * var(--u))`;
           e.haloBack.style.top    = `calc(${(cyC - Rh).toFixed(3)} * var(--u))`;
           e.haloBack.style.width  = `calc(${(2 * Rh).toFixed(3)} * var(--u))`;
@@ -1185,8 +1185,8 @@
 
     // ---- Step 2: Q is in CSS pixels; undo rotateZ (inner) around C ----
     // C = table center in CSS pixels (343/720 horizontally, 370.5/745 vertically)
-    const Cx = naturalW * (456 / 880);
-    const Cy = naturalH * (354 / 760);
+    const Cx = naturalW * (343 / 720);
+    const Cy = naturalH * (370.5 / 745);
     // Q = q + O. Then P = R_z(-spin)(Q - C) + C.
     const dQx = qx + Ox - Cx;
     const dQy = qy + Oy - Cy;
