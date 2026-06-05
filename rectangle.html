@@ -40,6 +40,9 @@
     stroke-width: 0.5;
     pointer-events: none;
   }
+
+  /* WebGL canvas inside the SVG foreignObject — paints the oil-paint circles via shader */
+  .board-canvas { display: block; width: 100%; height: 100%; pointer-events: none; }
   /* in the perspective (right) view the halos are solid/opaque, not translucent */
   .view-tilted .halo { fill: #efefef; stroke: rgba(0, 0, 0, 0.20); stroke-width: 0.6; }
 
@@ -871,6 +874,8 @@
         <rect class="object" x="40" y="30" width="288" height="512"/>
 
         <g class="halos"></g>
+        <foreignObject class="board-fo" x="-160" y="-85" width="720" height="745" pointer-events="none"
+          ><canvas xmlns="http://www.w3.org/1999/xhtml" class="board-canvas" style="width:100%;height:100%;display:block"></canvas></foreignObject>
         <g class="inner-circles"></g>
 
         <line class="ext-line" x1="40"  y1="542" x2="40"  y2="630"/>
@@ -902,6 +907,153 @@
   // Per-circle base animation parameters (shared between views so they stay in sync)
   const baseDurations = circles.map((_, idx) => 22 + (idx * 0.83) % 6);
   const baseDelays    = circles.map((_, idx) => -(idx * 3.7) - (idx * idx * 0.31));
+
+  // ==================== Unified WebGL pipeline (same shader as the public display) ====================
+  // Replaces the per-circle CSS gradient animation with one fragment shader per view.
+  const GL_MAX = 32;
+  const GL_VB  = { x: -160, y: -85, w: 720, h: 745 };   // editor SVG viewBox
+  const GL_VERT = `
+    attribute vec2 aPos;
+    void main() { gl_Position = vec4(aPos, 0.0, 1.0); }
+  `;
+  const GL_FRAG = `
+    precision highp float;
+    const int MAX = ${GL_MAX};
+    uniform vec2  uResolution;
+    uniform float uScale, uOx, uOy, uVbX, uVbY;
+    uniform int   uCount;
+    uniform vec2  uCenters[MAX];
+    uniform float uRadii[MAX];
+    uniform float uShift[MAX];
+    uniform sampler2D uPalette;
+    void main() {
+      float wx = uVbX + (gl_FragCoord.x - uOx) / uScale;
+      float wy = uVbY + ((uResolution.y - gl_FragCoord.y) - uOy) / uScale;
+      vec2  world = vec2(wx, wy);
+      vec4  col = vec4(0.0);
+      for (int i = 0; i < MAX; i++) {
+        if (i >= uCount) break;
+        vec2  ctr = uCenters[i];
+        float r   = uRadii[i];
+        float d   = distance(world, ctr);
+        if (d <= r + 1.0) {
+          float t  = d / (3.0 * r);
+          float pp = fract(t - uShift[i]);
+          vec3  c  = texture2D(uPalette, vec2(pp, 0.5)).rgb;
+          vec2  local = (world - ctr) / r;
+          float hi = 1.0 - smoothstep(0.0, 1.15, distance(local, vec2(-0.40, -0.50)));
+          float sh = 1.0 - smoothstep(0.0, 1.00, distance(local, vec2( 0.45,  0.62)));
+          c = clamp(c + hi * 0.40 - sh * 0.12, 0.0, 1.0);
+          float e = clamp((r - d) * uScale, 0.0, 1.0);
+          col = vec4(mix(col.rgb, c, e), 1.0);
+        }
+      }
+      gl_FragColor = col;
+    }
+  `;
+  function glCompile(gl, type, src) {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+    return s;
+  }
+  let glPalCache = null;
+  function buildPaletteBytes() {
+    if (glPalCache) return glPalCache;
+    const total = palette.reduce((s, p) => s + p[1], 0);
+    const W = 1024;
+    const data = new Uint8Array(W * 4);
+    const bands = []; let acc = 0;
+    for (const [hex, w] of palette) {
+      const a = acc / total; acc += w;
+      const v = parseInt(hex.slice(1), 16);
+      bands.push([a, acc / total, [(v >> 16) & 255, (v >> 8) & 255, v & 255]]);
+    }
+    for (let x = 0; x < W; x++) {
+      const p = x / W; let rgb = bands[bands.length - 1][2];
+      for (const [a, b, c] of bands) { if (p >= a && p < b) { rgb = c; break; } }
+      data[x*4] = rgb[0]; data[x*4+1] = rgb[1]; data[x*4+2] = rgb[2]; data[x*4+3] = 255;
+    }
+    const blur = (rad) => {
+      const s = data.slice();
+      for (let x = 0; x < W; x++) {
+        let r = 0, g = 0, b = 0, n = 0;
+        for (let k = -rad; k <= rad; k++) {
+          const xx = ((x + k) % W + W) % W;
+          r += s[xx*4]; g += s[xx*4+1]; b += s[xx*4+2]; n++;
+        }
+        data[x*4] = r/n|0; data[x*4+1] = g/n|0; data[x*4+2] = b/n|0;
+      }
+    };
+    blur(5); blur(5);
+    glPalCache = { data, W };
+    return glPalCache;
+  }
+  function initBoardGL(canvas) {
+    const gl = canvas.getContext('webgl', { antialias: true, alpha: true, premultipliedAlpha: false });
+    if (!gl) return null;
+    const prog = gl.createProgram();
+    gl.attachShader(prog, glCompile(gl, gl.VERTEX_SHADER, GL_VERT));
+    gl.attachShader(prog, glCompile(gl, gl.FRAGMENT_SHADER, GL_FRAG));
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+    gl.useProgram(prog);
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+    const aPos = gl.getAttribLocation(prog, 'aPos');
+    gl.enableVertexAttribArray(aPos);
+    gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+    const U = {};
+    for (const n of ['uResolution','uScale','uOx','uOy','uVbX','uVbY','uCount','uCenters','uRadii','uShift','uPalette']) U[n] = gl.getUniformLocation(prog, n);
+    const pal = buildPaletteBytes();
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, pal.W, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, pal.data);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.uniform1i(U.uPalette, 0);
+    return { gl, prog, U };
+  }
+  const glCenters = new Float32Array(GL_MAX * 2);
+  const glRadii   = new Float32Array(GL_MAX);
+  const glShifts  = new Float32Array(GL_MAX);
+  let   glSpeed   = 1.0;
+  const glStart   = performance.now();
+  function drawBoardGL(view) {
+    if (!view.gl) return;
+    const c = view.canvas;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const w = Math.max(1, Math.floor(c.clientWidth  * dpr));
+    const h = Math.max(1, Math.floor(c.clientHeight * dpr));
+    if (c.width !== w || c.height !== h) { c.width = w; c.height = h; view.gl.viewport(0, 0, w, h); }
+    const scale = Math.min(w / GL_VB.w, h / GL_VB.h);
+    const ox = (w - GL_VB.w * scale) / 2;
+    const oy = (h - GL_VB.h * scale) / 2;
+    const T = (performance.now() - glStart) / 1000;
+    const N = Math.min(circles.length, GL_MAX);
+    for (let i = 0; i < N; i++) {
+      const cc = circles[i];
+      glCenters[i*2] = cc.cx; glCenters[i*2+1] = cc.cy; glRadii[i] = cc.r;
+      const p = (T * glSpeed + (i * 3.7 + i * i * 0.31)) / (22 + (i * 0.83) % 6);
+      glShifts[i] = p - Math.floor(p);
+    }
+    const U = view.U, g = view.gl;
+    g.useProgram(view.prog);
+    g.uniform2f(U.uResolution, w, h);
+    g.uniform1f(U.uScale, scale); g.uniform1f(U.uOx, ox); g.uniform1f(U.uOy, oy);
+    g.uniform1f(U.uVbX, GL_VB.x); g.uniform1f(U.uVbY, GL_VB.y);
+    g.uniform1i(U.uCount, N);
+    g.uniform2fv(U.uCenters, glCenters);
+    g.uniform1fv(U.uRadii, glRadii);
+    g.uniform1fv(U.uShift, glShifts);
+    g.clearColor(0, 0, 0, 0); g.clear(g.COLOR_BUFFER_BIT);
+    g.drawArrays(g.TRIANGLE_STRIP, 0, 4);
+  }
 
   // ---- translucent 3D halo cylinder (perspective view): extrudes by the shared --depth ----
   const HALO_SIDES = 20;
@@ -993,27 +1145,13 @@
     const group = svg.querySelector('.inner-circles');
     const halos = svg.querySelector('.halos');
 
+    // ---- WebGL canvas for the oil-paint animation (replaces per-circle CSS gradient) ----
+    const canvas = svg.querySelector('.board-canvas');
+    const glCtx = initBoardGL(canvas);
+
     const elems = circles.map((c, idx) => {
-      const fo = document.createElementNS(svgNS, 'foreignObject');
-      fo.setAttribute('pointer-events', 'none');
-      group.appendChild(fo);
-
-      const clip = document.createElement('div');
-      clip.className = 'oil-clip';
-
-      const ring = document.createElement('div');
-      ring.className = 'oil-ring';
-      ring.style.setProperty('--pr', `${1.5 * c.d}px`);
-      ring.style.animation      = `oilShift ${baseDurations[idx]}s linear infinite`;
-      ring.style.animationDelay = `${baseDelays[idx]}s`;
-
-      const gloss = document.createElement('div');
-      gloss.className = 'oil-gloss';
-
-      clip.appendChild(ring);
-      clip.appendChild(gloss);
-      fo.appendChild(clip);
-
+      // Oil-paint animation now lives in the WebGL shader (canvas). SVG only carries
+      // the structural pieces: invisible hit circle (drag), label text, halo, halo cyl.
       const circle = document.createElementNS(svgNS, 'circle');
       circle.setAttribute('class', 'inner-c');
       circle.setAttribute('data-idx', idx);
@@ -1033,11 +1171,10 @@
         const cyl = buildHaloCyl(haloHost, c);
         haloBack = cyl.back; haloAnchor = cyl.anchor;
       }
-
-      return { circle, text, fo, ring, halo, haloBack, haloAnchor };
+      return { circle, text, halo, haloBack, haloAnchor };
     });
 
-    return { svg, group, halos, haloHost, elems, block };
+    return { svg, group, halos, haloHost, canvas, ...glCtx, elems, block };
   }
 
   const views = [
@@ -1050,16 +1187,12 @@
     for (const v of views) {
       for (let i = 0; i < circles.length; i++) {
         const c = circles[i];
-        const { circle, text, fo, halo } = v.elems[i];
+        const { circle, text, halo } = v.elems[i];
         circle.setAttribute('cx', c.cx);
         circle.setAttribute('cy', c.cy);
         circle.setAttribute('r', c.r);
         text.setAttribute('x', c.cx);
         text.setAttribute('y', c.cy);
-        fo.setAttribute('x', c.cx - c.r);
-        fo.setAttribute('y', c.cy - c.r);
-        fo.setAttribute('width',  c.r * 2);
-        fo.setAttribute('height', c.r * 2);
         halo.setAttribute('cx', c.cx);
         halo.setAttribute('cy', c.cy);
         halo.setAttribute('r', (c.hd || 0) / 2);
@@ -1096,6 +1229,12 @@
   }
 
   render();
+
+  // ---- continuous WebGL animation loop (drives the oil-paint flow in both views) ----
+  (function tick() {
+    for (const v of views) drawBoardGL(v);
+    requestAnimationFrame(tick);
+  })();
 
   // ---- collision resolution ----
   function resolve(draggedIdx) {
@@ -1249,12 +1388,7 @@
   const speedVal    = document.getElementById('speed-val');
 
   function applySpeed(speed) {
-    for (const v of views) {
-      for (let i = 0; i < v.elems.length; i++) {
-        const dur = (baseDurations[i] / speed).toFixed(2);
-        v.elems[i].ring.style.animationDuration = `${dur}s`;
-      }
-    }
+    glSpeed = speed;   // shift speed multiplier used by the WebGL render loop
     speedVal.textContent = speed.toFixed(2) + '×';
   }
   let savedSpeed = parseFloat(localStorage.getItem(SPEED_KEY));
@@ -1387,9 +1521,8 @@
       const c = circles[i];
       c.d += d;
       c.r = c.d / 2;
-      // Update animation pattern radius and label in both views
+      // Update labels (oil-paint radius is now driven by c.d inside the WebGL shader)
       for (const v of views) {
-        v.elems[i].ring.style.setProperty('--pr', `${1.5 * c.d}px`);
         v.elems[i].text.textContent = 'Ø' + c.d;
       }
     }
@@ -1485,18 +1618,8 @@
     return { d, r, cx: rectX + rectW / 2, cy: rectY + rectH / 2 };
   }
 
-  // Build one circle's DOM in a given view (mirrors createView's per-circle creation).
+  // Build one circle's DOM in a given view (WebGL handles the oil-paint; SVG keeps the structural bits).
   function makeCircleElems(v, c, idx) {
-    const fo = document.createElementNS(svgNS, 'foreignObject');
-    fo.setAttribute('pointer-events', 'none');
-    v.group.appendChild(fo);
-    const clip = document.createElement('div'); clip.className = 'oil-clip';
-    const ring = document.createElement('div'); ring.className = 'oil-ring';
-    ring.style.setProperty('--pr', `${1.5 * c.d}px`);
-    ring.style.animation = `oilShift ${baseDurations[idx]}s linear infinite`;
-    ring.style.animationDelay = `${baseDelays[idx]}s`;
-    const gloss = document.createElement('div'); gloss.className = 'oil-gloss';
-    clip.appendChild(ring); clip.appendChild(gloss); fo.appendChild(clip);
     const circle = document.createElementNS(svgNS, 'circle');
     circle.setAttribute('class', 'inner-c'); circle.setAttribute('data-idx', idx);
     v.group.appendChild(circle);
@@ -1511,7 +1634,7 @@
       const cyl = buildHaloCyl(v.haloHost, c);
       haloBack = cyl.back; haloAnchor = cyl.anchor;
     }
-    return { circle, text, fo, ring, halo, haloBack, haloAnchor };
+    return { circle, text, halo, haloBack, haloAnchor };
   }
 
   // Keep each circle element's data-idx in sync with its array position.
@@ -1542,7 +1665,7 @@
     baseDelays.splice(idx, 1);
     for (const v of views) {
       const e = v.elems[idx];
-      e.fo.remove(); e.circle.remove(); e.text.remove(); e.halo.remove();
+      e.circle.remove(); e.text.remove(); e.halo.remove();
       if (e.haloBack) e.haloBack.remove();
       if (e.haloAnchor) e.haloAnchor.remove();
       v.elems.splice(idx, 1);
@@ -1559,7 +1682,6 @@
     if (nd === c.d) return;
     c.d = nd; c.r = nd / 2;
     for (const v of views) {
-      v.elems[idx].ring.style.setProperty('--pr', `${1.5 * c.d}px`);
       v.elems[idx].text.textContent = 'Ø' + c.d;
     }
     clampToRect(c);
