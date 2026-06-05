@@ -19,8 +19,8 @@
   const COORDS_URL = './coords.json';   // same file the editor's server writes
   const POLL_MS    = 3000;
   const MAX        = 32;                 // shader circle capacity
-  // World view = the inner rectangle (40,30,286,511) padded by 10mm of black.
-  const VB = { x: 30, y: 20, w: 306, h: 531 };
+  // World view = the inner rectangle (40,30,286,511) exactly, no padding (edge-to-edge).
+  const VB = { x: 40, y: 30, w: 286, h: 511 };
 
   const canvas = document.getElementById('gl');
   const gl = canvas.getContext('webgl', { antialias: true, alpha: false, premultipliedAlpha: false });
@@ -180,7 +180,7 @@
     const w = Math.floor(canvas.clientWidth*dpr), h = Math.floor(canvas.clientHeight*dpr);
     if (canvas.width!==w || canvas.height!==h){ canvas.width=w; canvas.height=h; gl.viewport(0,0,w,h); }
 
-    const scale = Math.min(w/VB.w, h/VB.h);
+    const scale = Math.max(w/VB.w, h/VB.h);   // cover-fit: fill the viewport, no letterbox
     const ox = (w - VB.w*scale)/2, oy = (h - VB.h*scale)/2;
 
     const T = performance.now()/1000;
