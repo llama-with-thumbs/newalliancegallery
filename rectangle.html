@@ -17,6 +17,28 @@
     overflow: hidden;
   }
 
+  /* ---------- bottom-right links (GitHub + live display) ---------- */
+  .footer-links {
+    position: fixed;
+    bottom: 8px;
+    right: 12px;
+    z-index: 20;
+    display: flex;
+    gap: 14px;
+    font-size: 11px;
+    letter-spacing: 0.05em;
+    font-family: "Helvetica Neue", Arial, sans-serif;
+    user-select: none;
+    pointer-events: auto;
+  }
+  .footer-links a {
+    color: rgba(0, 0, 0, 0.6);
+    text-decoration: none;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.15);
+    transition: color 0.12s ease, border-color 0.12s ease;
+  }
+  .footer-links a:hover { color: #000; border-bottom-color: rgba(0, 0, 0, 0.5); }
+
   /* ---------- shared SVG drawing styles ---------- */
   .object    { fill: #ffffff; stroke: #000; stroke-width: 0.6; }
   .border    { fill: none;    stroke: #000; stroke-width: 0.6; }
@@ -695,6 +717,11 @@
     <span class="view-label">Tilted perspective</span>
   </div>
 </main>
+
+<div class="footer-links">
+  <a href="https://github.com/llama-with-thumbs/newalliancegallery" target="_blank" rel="noopener" title="Source on GitHub">GitHub</a>
+  <a href="https://llama-with-thumbs.github.io/newalliancegallery/" target="_blank" rel="noopener" title="Live presentation">Live</a>
+</div>
 
 <script>
 (async function () {
