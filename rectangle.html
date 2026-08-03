@@ -42,7 +42,7 @@
 
   /* ---------- shared SVG drawing styles ---------- */
   .object    { fill: #ffffff; stroke: #000; stroke-width: 0.6; }
-  .border    { fill: none;    stroke: #000; stroke-width: 0.6; }
+  .border    { fill: none;    stroke: #1e73ff; stroke-width: 0.6; }
   .circle-bg { fill: #d8d8d8; stroke: #000; stroke-width: 0.6; }
 
   .inner-c {
@@ -69,11 +69,16 @@
   /* in the perspective (right) view the halos are solid/opaque, not translucent */
   .view-tilted .halo { fill: #efefef; stroke: rgba(0, 0, 0, 0.20); stroke-width: 0.6; }
 
-  /* hovering a panel row emphasises the matching circle in the blueprint */
+  /* hover links both ways: a panel row <-> its circle in the blueprint */
   .inner-c.emph { stroke: #19e6ff; stroke-width: 5; }
 
   .ext-line  { stroke: #000; stroke-width: 0.25; }
   .dim-line  { stroke: #000; stroke-width: 0.25; }
+  /* material bounding box (table + halos) for planning the cut sheet */
+  .mat-rect  { fill: none; stroke: #fff; stroke-width: 0.6; stroke-dasharray: 6 4; }
+  .mat-dim   { font-size: 15px; fill: #fff; stroke: rgba(0,0,0,0.55); stroke-width: 2.4px;
+               paint-order: stroke; stroke-linejoin: round;
+               text-anchor: middle; dominant-baseline: middle; }
   .dim-text  { font-size: 14px; fill: #000; text-anchor: middle; dominant-baseline: middle; }
   .label {
     font-size: 11px;
@@ -222,6 +227,8 @@
   .cr-d { font-variant-numeric: tabular-nums; opacity: 0.9; }
   .cr-hd { font-variant-numeric: tabular-nums; opacity: 0.5; font-size: 11px; }
   .circle-row:hover { background: rgba(25, 230, 255, 0.16); }
+  /* highlight when the matching circle is hovered in the blueprint */
+  .circle-row.emph { background: rgba(25, 230, 255, 0.22); box-shadow: inset 0 0 0 1px #19e6ff; }
   .cr-actions { display: flex; gap: 4px; }
   .cr-actions button {
     width: 24px; height: 24px; padding: 0; background: #444; color: #fff;
@@ -597,6 +604,7 @@
   .view-tilted .dim-line,
   .view-tilted .dim-text,
   .view-tilted .border,
+  .view-tilted .material-box,
   .view-tilted .object {
     display: none;
   }
@@ -690,6 +698,11 @@
   <div class="control">
     <button type="button" class="panel-toggle" id="circles-toggle" aria-expanded="false">✛ Add / edit circles</button>
   </div>
+
+  <div class="control">
+    <button type="button" class="reset-btn" id="export-coords"
+            title="Download circle diameters, coordinates and halo diameters as CSV">⬇ Export CSV</button>
+  </div>
 </aside>
 </div>
 
@@ -741,10 +754,18 @@
   // the perspective view's rotation pivot (and thus the drag math).
   let sculptureMode = false;
   const rectX = 40, rectY = 30, rectW = 288, rectH = 512;
+  const FRAME_GAP = 5;                    // blue frame offset from the table (mm)
+  // Fixed cut-sheet: the whole arrangement must stay inside it and halos may
+  // not extend past it. Centered on the table (equal margin on opposite sides).
+  const MATERIAL = { w: 450, h: 610 };
+  MATERIAL.x = rectX + rectW / 2 - MATERIAL.w / 2;
+  MATERIAL.y = rectY + rectH / 2 - MATERIAL.h / 2;
   const minGap = 10;
   const diameters = [100, 105, 110, 115, 120, 130, 140, 150];
   // translucent halo around each circle (independent diameter; may overlap and exceed the frame)
   const HALO_DEFAULT = 250, HALO_MIN = 0, HALO_MAX = 2000, HALO_STEP = 10;
+  // largest halo that can ever fit inside the fixed sheet (circle → min side)
+  const HALO_FIT_MAX = Math.min(HALO_MAX, MATERIAL.w, MATERIAL.h);
 
   const svgNS = 'http://www.w3.org/2000/svg';
 
@@ -777,8 +798,16 @@
   // ---- helpers ----
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   function clampToRect(c) {
-    c.cx = clamp(c.cx, rectX + c.r, rectX + rectW - c.r);
-    c.cy = clamp(c.cy, rectY + c.r, rectY + rectH - c.r);
+    const r = c.r;
+    const hr = (c.hd || 0) / 2;   // halo radius — must stay inside the material sheet
+    // Y: circle body inside the table AND halo inside the sheet.
+    let loY = Math.max(rectY + r, MATERIAL.y + hr);
+    let hiY = Math.min(rectY + rectH - r, MATERIAL.y + MATERIAL.h - hr);
+    c.cy = loY <= hiY ? clamp(c.cy, loY, hiY) : (loY + hiY) / 2;
+    // X: circle body inside the table AND halo inside the sheet.
+    let loX = Math.max(rectX + r, MATERIAL.x + hr);
+    let hiX = Math.min(rectX + rectW - r, MATERIAL.x + MATERIAL.w - hr);
+    c.cx = loX <= hiX ? clamp(c.cx, loX, hiX) : (loX + hiX) / 2;
   }
 
   // ---- random / fallback placement ----
@@ -881,8 +910,12 @@
     for (let i = 0; i < 300 && !circles; i++) circles = tryPlace(diameters);
   }
   if (!circles) circles = fallback.map(c => ({ ...c }));
+  // set halo defaults BEFORE clamping so the material-sheet halo constraint applies on load
+  circles.forEach(c => {
+    if (typeof c.hd !== 'number' || !isFinite(c.hd)) c.hd = HALO_DEFAULT;
+    if (c.hd > HALO_FIT_MAX) c.hd = HALO_FIT_MAX;   // never larger than the fixed sheet
+  });
   circles.forEach(clampToRect);
-  circles.forEach(c => { if (typeof c.hd !== 'number' || !isFinite(c.hd)) c.hd = HALO_DEFAULT; });
   if (!wasLoadedFromStorage) saveCurrent();
 
   // ---- build a board SVG (used for both flat and tilted views) ----
@@ -898,33 +931,43 @@
         </defs>
 
         <circle class="circle-bg" cx="184" cy="286" r="333.27"/>
-        <rect class="border" x="25" y="15" width="318" height="542"/>
-        <rect class="object" x="40" y="30" width="288" height="512"/>
+        <rect class="border" x="${rectX-FRAME_GAP}" y="${rectY-FRAME_GAP}" width="${rectW+2*FRAME_GAP}" height="${rectH+2*FRAME_GAP}"/>
+        <rect class="object" x="${rectX}" y="${rectY}" width="${rectW}" height="${rectH}"/>
 
         <g class="halos"></g>
         <foreignObject class="board-fo" x="-160" y="-85" width="720" height="745" pointer-events="none"
           ><canvas xmlns="http://www.w3.org/1999/xhtml" class="board-canvas" style="width:100%;height:100%;display:block"></canvas></foreignObject>
         <g class="inner-circles"></g>
 
-        <line class="ext-line" x1="40"  y1="542" x2="40"  y2="630"/>
-        <line class="ext-line" x1="328" y1="542" x2="328" y2="630"/>
-        <line class="dim-line" x1="40" y1="623" x2="328" y2="623"
+        <line class="ext-line" x1="${rectX}"         y1="${rectY+rectH}" x2="${rectX}"         y2="${rectY+rectH+88}"/>
+        <line class="ext-line" x1="${rectX+rectW}"   y1="${rectY+rectH}" x2="${rectX+rectW}"   y2="${rectY+rectH+88}"/>
+        <line class="dim-line" x1="${rectX}" y1="${rectY+rectH+81}" x2="${rectX+rectW}" y2="${rectY+rectH+81}"
               marker-start="url(#${arrowId})" marker-end="url(#${arrowId})"/>
-        <text class="dim-text" x="184" y="615">288 mm</text>
+        <text class="dim-text" x="${rectX+rectW/2}" y="${rectY+rectH+73}">${rectW} mm</text>
 
-        <line class="ext-line" x1="328" y1="30"  x2="535" y2="30"/>
-        <line class="ext-line" x1="328" y1="542" x2="535" y2="542"/>
-        <line class="dim-line" x1="528" y1="30" x2="528" y2="542"
+        <line class="ext-line" x1="${rectX+rectW}" y1="${rectY}"         x2="${rectX+rectW+207}" y2="${rectY}"/>
+        <line class="ext-line" x1="${rectX+rectW}" y1="${rectY+rectH}"   x2="${rectX+rectW+207}" y2="${rectY+rectH}"/>
+        <line class="dim-line" x1="${rectX+rectW+200}" y1="${rectY}" x2="${rectX+rectW+200}" y2="${rectY+rectH}"
               marker-start="url(#${arrowId})" marker-end="url(#${arrowId})"/>
-        <g transform="translate(520, 286) rotate(-90)">
-          <text class="dim-text" x="0" y="0">512 mm</text>
+        <g transform="translate(${rectX+rectW+192}, ${rectY+rectH/2}) rotate(-90)">
+          <text class="dim-text" x="0" y="0">${rectH} mm</text>
         </g>
 
         <line class="dim-line" x1="480" y1="-50" x2="419.66" y2="50.34" marker-end="url(#${arrowId})"/>
         <text class="dim-text" x="480" y="-62">Ø 667 mm</text>
 
         <line class="dim-line" x1="-105" y1="-50" x2="32" y2="22.5" marker-end="url(#${arrowId})"/>
-        <text class="dim-text" x="-105" y="-62">15 mm</text>
+        <text class="dim-text" x="-105" y="-62">5 mm</text>
+
+        <!-- fixed cut-sheet (450 x 610), centered on the table. Halos are
+             constrained by clampToRect so nothing crosses this boundary. -->
+        <g class="material-box">
+          <rect class="mat-rect" x="${MATERIAL.x}" y="${MATERIAL.y}" width="${MATERIAL.w}" height="${MATERIAL.h}"/>
+          <text class="mat-dim mat-w" x="${MATERIAL.x + MATERIAL.w/2}" y="${MATERIAL.y - 11}">${MATERIAL.w} mm</text>
+          <g transform="translate(${MATERIAL.x - 13}, ${MATERIAL.y + MATERIAL.h/2}) rotate(-90)">
+            <text class="mat-dim mat-h" x="0" y="0">${MATERIAL.h} mm</text>
+          </g>
+        </g>
       </svg>
     `;
     const tmp = document.createElement('div');
@@ -1256,6 +1299,33 @@
     ).join('');
   }
 
+  // ---- export: diameter, coordinates (same mm system as the list) and halo diameter ----
+  function exportCoordsCSV() {
+    const rows = circles
+      .map(c => ({
+        d: c.d,
+        x: c.cx - rectX,
+        y: (rectY + rectH) - c.cy,
+        hd: c.hd
+      }))
+      // order bottom-left -> top-right: first row = most left & bottom
+      // (smallest x + y), last row = most right & top (largest x + y).
+      .sort((a, b) => (a.x + a.y) - (b.x + b.y) || a.x - b.x);
+    const header = 'diameter_mm,x_mm,y_mm,halo_diameter_mm';
+    const lines = rows.map(r => `${r.d},${r.x.toFixed(1)},${r.y.toFixed(1)},${r.hd}`);
+    const csv = [header, ...lines].join('\r\n') + '\r\n';
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'table-circles.csv';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+  document.getElementById('export-coords').addEventListener('click', exportCoordsCSV);
+
   render();
 
   // ---- continuous WebGL animation loop (drives the oil-paint flow in both views) ----
@@ -1406,6 +1476,16 @@
     }
     v.group.addEventListener('pointerup', endDrag);
     v.group.addEventListener('pointercancel', endDrag);
+
+    // hover a circle -> highlight its row in the circles window (and vice-versa)
+    v.group.addEventListener('mouseover', (ev) => {
+      if (ev.target.tagName !== 'circle') return;
+      const idx = parseInt(ev.target.getAttribute('data-idx'), 10);
+      if (!Number.isNaN(idx)) emphasize(idx);
+    });
+    v.group.addEventListener('mouseout', (ev) => {
+      if (ev.target.tagName === 'circle') emphasize(-1);
+    });
   }
 
   window.addEventListener('pagehide',     flushSave);
@@ -1717,13 +1797,15 @@
     renderCircleRows(); updateSizeButtons();
   }
 
-  // halo diameter is independent: no collision, no clamping to the frame
+  // halo diameter is independent, but it may not grow past the material sheet;
+  // growing near an edge nudges the circle inward to keep the halo inside.
   function resizeHalo(idx, delta) {
     if (locked) return;
     const c = circles[idx];
-    const nh = clamp(c.hd + delta, HALO_MIN, HALO_MAX);
+    const nh = clamp(c.hd + delta, HALO_MIN, HALO_FIT_MAX);
     if (nh === c.hd) return;
     c.hd = nh;
+    clampToRect(c); resolve(-1);
     const te = views[1] && views[1].elems[idx];   // rebuild 3D side panels for the new radius
     if (te && te.haloAnchor) buildHaloSidePanels(te.haloAnchor, c.hd / 2);
     render(); saveCurrent(); renderCircleRows();
@@ -1762,14 +1844,24 @@
     else if (act === 'hdec') resizeHalo(idx, -HALO_STEP);
     else if (act === 'del') removeCircle(idx);
   });
-  // hover a row -> emphasise that circle in the top-down blueprint (flat view)
+  // hover links a panel row and its circle in the top-down blueprint both ways
   let emphIdx = -1;
+  function setRowEmph(idx, on) {
+    const row = circleRowsEl.querySelector(`.circle-row[data-idx="${idx}"]`);
+    if (row) row.classList.toggle('emph', on);
+  }
   function emphasize(idx) {
     if (idx === emphIdx) return;
     const flat = views[0];
-    if (emphIdx >= 0 && flat.elems[emphIdx]) flat.elems[emphIdx].circle.classList.remove('emph');
+    if (emphIdx >= 0) {
+      if (flat.elems[emphIdx]) flat.elems[emphIdx].circle.classList.remove('emph');
+      setRowEmph(emphIdx, false);
+    }
     emphIdx = idx;
-    if (idx >= 0 && flat.elems[idx]) flat.elems[idx].circle.classList.add('emph');
+    if (idx >= 0) {
+      if (flat.elems[idx]) flat.elems[idx].circle.classList.add('emph');
+      setRowEmph(idx, true);
+    }
   }
   circleRowsEl.addEventListener('mousemove', (ev) => {
     const row = ev.target.closest('.circle-row');
