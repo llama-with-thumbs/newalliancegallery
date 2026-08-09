@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Alignment calibration</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  /* IDENTICAL layout to index.html so the world->screen mapping matches exactly */
+  body { padding: 0 5px; box-sizing: border-box; }
+  canvas#gl { display: block; width: 100%; height: 100vh; background: #000; }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<script>
+(function () {
+  'use strict';
+  // Calibration page: draws a small marker at each circle's KNOWN centre, so a
+  // photo of the panel reveals (a) where the screen's coordinate frame lands in
+  // the photo and (b) how far each physical hole sits from its intended centre.
+  const COORDS_URL = './coords.json';
+  const VB = { x: 40, y: 30, w: 288, h: 512 };   // same world view as index.html
+  const MARK = 0.45;                             // marker radius as a fraction of the circle radius
+
+  const canvas = document.getElementById('gl');
+  const ctx = canvas.getContext('2d');
+  let circles = [];
+
+  function draw() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const w = Math.floor(canvas.clientWidth * dpr), h = Math.floor(canvas.clientHeight * dpr);
+    if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+
+    const scale = Math.min(w / VB.w, h / VB.h);      // contain-fit, same as the display
+    const ox = (w - VB.w * scale) / 2, oy = (h - VB.h * scale) / 2;
+    const X = wx => ox + (wx - VB.x) * scale;
+    const Y = wy => oy + (wy - VB.y) * scale;
+
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, h);
+
+    for (const c of circles) {
+      const r = c.d / 2;
+      // green marker disc, well inside the hole so it stays fully visible
+      ctx.fillStyle = '#00ff40';
+      ctx.beginPath(); ctx.arc(X(c.cx), Y(c.cy), r * MARK * scale, 0, Math.PI * 2); ctx.fill();
+      // black dot punched at the exact centre
+      ctx.fillStyle = '#000';
+      ctx.beginPath(); ctx.arc(X(c.cx), Y(c.cy), Math.max(2, r * 0.10 * scale), 0, Math.PI * 2); ctx.fill();
+      // thin magenta outline at the circle's true edge: shows the intended hole rim
+      ctx.strokeStyle = '#ff00c8'; ctx.lineWidth = Math.max(2, 1.2 * scale);
+      ctx.beginPath(); ctx.arc(X(c.cx), Y(c.cy), r * scale, 0, Math.PI * 2); ctx.stroke();
+    }
+    requestAnimationFrame(draw);
+  }
+
+  fetch(COORDS_URL, { cache: 'no-store' })
+    .then(r => r.json())
+    .then(list => { circles = list.filter(c => isFinite(+c.d) && isFinite(+c.cx) && isFinite(+c.cy)); })
+    .catch(() => {});
+
+  requestAnimationFrame(draw);
+})();
+</script>
+</body>
+</html>
