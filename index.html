@@ -19,7 +19,7 @@
 (function () {
   'use strict';
   const COORDS_URL = './coords.json';   // same file the editor's server writes
-  const POLL_MS    = 3000;
+  const POLL_MS    = 30000;              // nothing animates now, so poll gently
   const MAX        = 32;                 // shader circle capacity
   // World view = the inner rectangle (40,30,288,512) -- exact 9:16, matches a 1080x1920 screen perfectly.
   const VB = { x: 40, y: 30, w: 288, h: 512 };
@@ -172,11 +172,22 @@
       const text = await res.text();
       if (text === lastRaw) return;
       const norm = normalize(JSON.parse(text));
-      if (norm){ lastRaw = text; setCircles(norm); }
+      if (norm){ lastRaw = text; setCircles(norm); requestDraw(); }
     } catch(e) {}
   }
 
-  // ---------- render loop ----------
+  // ---------- static render ----------
+  // Drawn once, not on an animation loop: the kiosk Pi has no active cooling and
+  // hit its 110 C critical trip while rendering this shader continuously, which
+  // powered the board off. A redraw happens only when the layout or the canvas
+  // size actually changes, so the GPU is idle the rest of the time.
+  let pendingDraw = false;
+  function requestDraw(){
+    if (pendingDraw) return;
+    pendingDraw = true;
+    requestAnimationFrame(function(){ pendingDraw = false; render(); });
+  }
+
   function render(){
     const dpr = Math.min(window.devicePixelRatio||1, 2);
     const w = Math.floor(canvas.clientWidth*dpr), h = Math.floor(canvas.clientHeight*dpr);
@@ -185,7 +196,8 @@
     const scale = Math.min(w/VB.w, h/VB.h);   // contain-fit: aspect matches screen exactly, no crop
     const ox = (w - VB.w*scale)/2, oy = (h - VB.h*scale)/2;
 
-    const T = performance.now()/1000;
+    // frozen at T=0; each circle keeps its own phase offset so the rings still differ
+    const T = 0;
     for (let i=0;i<count;i++){ const p=(T+offs[i])/durs[i]; shift[i]=p-Math.floor(p); }
 
     gl.uniform2f(U.uResolution, w, h);
@@ -198,12 +210,13 @@
 
     gl.clearColor(0,0,0,1); gl.clear(gl.COLOR_BUFFER_BIT);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-    requestAnimationFrame(render);
   }
+
+  window.addEventListener('resize', requestDraw);
 
   poll();
   setInterval(poll, POLL_MS);
-  requestAnimationFrame(render);
+  requestDraw();
 })();
 </script>
 </body>
