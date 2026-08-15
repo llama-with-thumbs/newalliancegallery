@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gallery alignment</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  /* IDENTICAL layout to index.html so the world->screen mapping matches exactly */
+  body { padding: 0 5px; box-sizing: border-box; }
+  .stack { position: relative; width: 100%; height: 100vh; }
+  canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+  canvas#gl { background: #000; }
+  canvas#ov { pointer-events: none; }
+</style>
+</head>
+<body>
+<div class="stack">
+  <canvas id="gl"></canvas>
+  <canvas id="ov"></canvas>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  // Alignment page. Draws the gallery circles exactly as index.html does, then
+  // overlays, per circle: its id, a centre crosshair, and a ring on its exact
+  // rim. Photograph one hole close up and the gap between that ring and the cut
+  // edge is the error for that circle - a local reading, so it does not inherit
+  // any perspective error from a whole-panel photo.
+  const COORDS_URL = './coords.json';
+  const POLL_MS    = 5000;
+  const MAX        = 32;
+  const VB = { x: 40, y: 30, w: 288, h: 512 };   // same world view as index.html
+
+  const canvas = document.getElementById('gl');
+  const ov     = document.getElementById('ov');
+  const octx   = ov.getContext('2d');
+  const gl = canvas.getContext('webgl', { antialias: true, alpha: false, premultipliedAlpha: false });
+  if (!gl) { document.body.innerHTML = '<p style="color:#888;font:14px sans-serif">WebGL not available.</p>'; return; }
+
+  const VERT = `
+    attribute vec2 aPos;
+    void main() { gl_Position = vec4(aPos, 0.0, 1.0); }
+  `;
+  const FRAG = `
+    precision highp float;
+    const int MAX = ${MAX};
+    uniform vec2  uResolution;
+    uniform float uScale, uOx, uOy, uVbX, uVbY;
+    uniform int   uCount;
+    uniform vec2  uCenters[MAX];
+    uniform float uRadii[MAX];
+    uniform float uShift[MAX];
+    uniform sampler2D uPalette;
+    void main() {
+      float wx = uVbX + (gl_FragCoord.x - uOx) / uScale;
+      float wy = uVbY + ((uResolution.y - gl_FragCoord.y) - uOy) / uScale;
+      vec2 world = vec2(wx, wy);
+      vec3 col = vec3(0.0);
+      for (int i = 0; i < MAX; i++) {
+        if (i >= uCount) break;
+        vec2  ctr = uCenters[i];
+        float r   = uRadii[i];
+        float d   = distance(world, ctr);
+        if (d <= r + 1.0) {
+          float t  = d / (3.0 * r);
+          float pp = fract(t - uShift[i]);
+          vec3  c  = texture2D(uPalette, vec2(pp, 0.5)).rgb;
+          vec2  local = (world - ctr) / r;
+          float hi = 1.0 - smoothstep(0.0, 1.15, distance(local, vec2(-0.40, -0.50)));
+          float sh = 1.0 - smoothstep(0.0, 1.00, distance(local, vec2( 0.45,  0.62)));
+          c = clamp(c + hi * 0.40 - sh * 0.12, 0.0, 1.0);
+          float e = clamp((r - d) * uScale, 0.0, 1.0);
+          col = mix(col, c, e);
+        }
+      }
+      gl_FragColor = vec4(col, 1.0);
+    }
+  `;
+  function compile(type, src) {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+    return s;
+  }
+  const prog = gl.createProgram();
+  gl.attachShader(prog, compile(gl.VERTEX_SHADER, VERT));
+  gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FRAG));
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+  gl.useProgram(prog);
+
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+  const aPos = gl.getAttribLocation(prog, 'aPos');
+  gl.enableVertexAttribArray(aPos);
+  gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+  const U = {};
+  for (const n of ['uResolution','uScale','uOx','uOy','uVbX','uVbY','uCount','uCenters','uRadii','uShift','uPalette'])
+    U[n] = gl.getUniformLocation(prog, n);
+
+  function hex2rgb(h){ const v=parseInt(h.slice(1),16); return [(v>>16)&255,(v>>8)&255,v&255]; }
+  (function buildPalette() {
+    const palette = [
+      ['#FF1E78',10.0],['#D81B72',3.5],['#00B5D9',3.5],['#7AD7DC',2.5],
+      ['#F2D1C7', 2.5],['#FF1020',8.5],['#D10018',5.5],['#FF1A32',6.5],
+      ['#005D87', 7.5],['#53B4D8',3.5],['#FF1728',5.0],['#FF6B7D',2.5],
+      ['#D7C9BF', 8.5],['#E8DDD1',4.5],['#2EB4E8',2.5],['#FF7A86',2.5],
+      ['#E00018', 5.5],['#D60017',5.5],['#2AA7CC',3.5],['#D8CCC5',6.0],
+      ['#E5F000', 4.0],['#10C0CC',5.0],['#FF5A8A',5.0],['#FF1F8C',6.0]
+    ];
+    const W = 1024, total = palette.reduce((s,p)=>s+p[1],0);
+    const bands = []; let acc = 0;
+    for (const [hex,w] of palette){ const a=acc/total; acc+=w; bands.push([a, acc/total, hex2rgb(hex)]); }
+    const data = new Uint8Array(W*4);
+    for (let x=0;x<W;x++){
+      const p=x/W; let rgb=bands[bands.length-1][2];
+      for (const [a,b,c] of bands){ if(p>=a && p<b){ rgb=c; break; } }
+      data[x*4]=rgb[0]; data[x*4+1]=rgb[1]; data[x*4+2]=rgb[2]; data[x*4+3]=255;
+    }
+    const blur = (rad)=>{ const s=data.slice();
+      for(let x=0;x<W;x++){ let r=0,g=0,b=0,n=0;
+        for(let k=-rad;k<=rad;k++){ const xx=((x+k)%W+W)%W; r+=s[xx*4];g+=s[xx*4+1];b+=s[xx*4+2];n++; }
+        data[x*4]=r/n|0; data[x*4+1]=g/n|0; data[x*4+2]=b/n|0; } };
+    blur(5); blur(5);
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,W,1,0,gl.RGBA,gl.UNSIGNED_BYTE,data);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.uniform1i(U.uPalette, 0);
+  })();
+
+  let list = [], lastRaw = null;
+  const centers = new Float32Array(MAX*2);
+  const radii   = new Float32Array(MAX);
+  const shift   = new Float32Array(MAX);
+  const durs    = new Float32Array(MAX);
+  const offs    = new Float32Array(MAX);
+
+  function setCircles(items){
+    list = items.slice(0, MAX);
+    for (let i=0;i<list.length;i++){
+      centers[i*2]=list[i].cx; centers[i*2+1]=list[i].cy; radii[i]=list[i].d/2;
+      durs[i]=22 + (i*0.83)%6;
+      offs[i]=(i*3.7) + (i*i*0.31);
+    }
+  }
+
+  async function poll(){
+    try {
+      const res = await fetch(COORDS_URL, { cache:'no-store' });
+      if (!res.ok) return;
+      const text = await res.text();
+      if (text === lastRaw) return;
+      const data = JSON.parse(text);
+      if (!Array.isArray(data)) return;
+      const items = [];
+      for (let i=0;i<data.length;i++){
+        const c = data[i], d=+c.d, cx=+c.cx, cy=+c.cy;
+        if (!isFinite(d)||!isFinite(cx)||!isFinite(cy)) return;
+        items.push({ d, cx, cy, id: (c.id != null ? c.id : i+1) });
+      }
+      lastRaw = text; setCircles(items); requestDraw();
+    } catch(e) {}
+  }
+
+  let pendingDraw = false;
+  function requestDraw(){
+    if (pendingDraw) return;
+    pendingDraw = true;
+    requestAnimationFrame(function(){ pendingDraw = false; render(); });
+  }
+
+  function render(){
+    const dpr = Math.min(window.devicePixelRatio||1, 2);
+    const w = Math.floor(canvas.clientWidth*dpr), h = Math.floor(canvas.clientHeight*dpr);
+    if (canvas.width!==w || canvas.height!==h){ canvas.width=w; canvas.height=h; gl.viewport(0,0,w,h); }
+    if (ov.width!==w || ov.height!==h){ ov.width=w; ov.height=h; }
+
+    const scale = Math.min(w/VB.w, h/VB.h);
+    const ox = (w - VB.w*scale)/2, oy = (h - VB.h*scale)/2;
+
+    const T = 0;
+    for (let i=0;i<list.length;i++){ const p=(T+offs[i])/durs[i]; shift[i]=p-Math.floor(p); }
+
+    gl.uniform2f(U.uResolution, w, h);
+    gl.uniform1f(U.uScale, scale); gl.uniform1f(U.uOx, ox); gl.uniform1f(U.uOy, oy);
+    gl.uniform1f(U.uVbX, VB.x); gl.uniform1f(U.uVbY, VB.y);
+    gl.uniform1i(U.uCount, list.length);
+    gl.uniform2fv(U.uCenters, centers);
+    gl.uniform1fv(U.uRadii, radii);
+    gl.uniform1fv(U.uShift, shift);
+    gl.clearColor(0,0,0,1); gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+    // ---------- markers ----------
+    const X = wx => ox + (wx - VB.x) * scale;
+    const Y = wy => oy + (wy - VB.y) * scale;
+    octx.clearRect(0,0,w,h);
+    octx.lineCap = 'round';
+    for (const c of list) {
+      const px = X(c.cx), py = Y(c.cy), pr = (c.d/2) * scale;
+      const lw = Math.max(2, 0.9 * scale);
+
+      // ring on the circle's exact rim: compare this against the cut edge
+      octx.strokeStyle = '#00ff40'; octx.lineWidth = lw;
+      octx.beginPath(); octx.arc(px, py, pr, 0, Math.PI*2); octx.stroke();
+
+      // centre crosshair, with a gap in the middle for the number
+      const arm = Math.max(10, pr * 0.42), gap = Math.max(7, pr * 0.20);
+      octx.strokeStyle = '#000'; octx.lineWidth = lw * 2.6;
+      for (let pass = 0; pass < 2; pass++) {
+        octx.beginPath();
+        octx.moveTo(px - arm, py); octx.lineTo(px - gap, py);
+        octx.moveTo(px + gap, py); octx.lineTo(px + arm, py);
+        octx.moveTo(px, py - arm); octx.lineTo(px, py - gap);
+        octx.moveTo(px, py + gap); octx.lineTo(px, py + arm);
+        octx.stroke();
+        octx.strokeStyle = '#00ff40'; octx.lineWidth = lw;   // second pass: bright core
+      }
+
+      // identifier, centred on the circle's exact centre
+      const fs = Math.max(15, Math.min(pr * 0.62, 0.30 * scale * 34));
+      octx.font = `700 ${fs}px "DejaVu Sans", Verdana, sans-serif`;
+      octx.textAlign = 'center'; octx.textBaseline = 'middle';
+      octx.lineJoin = 'round';
+      octx.strokeStyle = '#000'; octx.lineWidth = Math.max(3, fs * 0.22);
+      octx.strokeText(String(c.id), px, py);
+      octx.fillStyle = '#fff';
+      octx.fillText(String(c.id), px, py);
+    }
+  }
+
+  window.addEventListener('resize', requestDraw);
+  poll();
+  setInterval(poll, POLL_MS);
+  requestDraw();
+})();
+</script>
+</body>
+</html>
