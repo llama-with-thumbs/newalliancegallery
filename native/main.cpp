@@ -150,7 +150,38 @@ static bool loadGL() {
 struct Circle {
   int id = 0;
   float d = 0, cx = 0, cy = 0;
+  // per-circle character, derived from the id so it survives reordering and is
+  // the same after every restart
+  float period = 24.f;    // seconds for one trip through the palette
+  float ringScale = 1.f;  // how much of the palette the radius spans
+  float phase = 0.f;      // where in the sequence it starts
 };
+
+// Deterministic hash -> [0,1). Three draws per circle, well spread, so no two
+// circles land on the same period and the set never re-aligns.
+static float hash01(uint32_t x) {
+  x ^= x >> 16; x *= 0x7feb352dU;
+  x ^= x >> 15; x *= 0x846ca68bU;
+  x ^= x >> 16;
+  return (float)(x & 0xFFFFFFu) / (float)0x1000000u;
+}
+
+// Drift apart rather than beat together: a shared period makes sixteen circles
+// read as one object breathing. Each gets its own period, its own start point
+// in the colour sequence, and a slightly different radial stride so the bands
+// do not line up across circles either.
+static void deriveCharacter(std::vector<Circle> &cs, float basePeriod,
+                            float spread, float ringJitter, float phaseSpread) {
+  for (size_t i = 0; i < cs.size(); i++) {
+    Circle &c = cs[i];
+    uint32_t k = (uint32_t)(c.id ? c.id : (int)i + 1) * 2654435761u;
+    float h1 = hash01(k + 1u), h2 = hash01(k + 2u), h3 = hash01(k + 3u);
+    c.period = basePeriod * (1.f + spread * (h1 * 2.f - 1.f));
+    c.ringScale = 1.f + ringJitter * (h2 * 2.f - 1.f);
+    c.phase = h3 * phaseSpread;
+    if (c.period < 1.f) c.period = 1.f;
+  }
+}
 
 // world view, identical to index.html's VB
 static const float VB_X = 40.f, VB_Y = 30.f, VB_W = 288.f, VB_H = 512.f;
@@ -253,13 +284,14 @@ varying vec2  vWorld;
 uniform vec2  uCenterWorld;
 uniform float uRadius;
 uniform float uShift;
+uniform float uRingScale;
 uniform float uScale;
 uniform sampler2D uPalette;
 void main() {
   float d = distance(vWorld, uCenterWorld);
   float a = clamp((uRadius - d) * uScale, 0.0, 1.0);
   if (a <= 0.0) discard;
-  float t  = d / (3.0 * uRadius);
+  float t  = d / (3.0 * uRadius) * uRingScale;
   float pp = fract(t - uShift);
   vec3  c  = texture2D(uPalette, vec2(pp, 0.5)).rgb;
   vec2  local = (vWorld - uCenterWorld) / uRadius;
@@ -408,6 +440,7 @@ int main(int argc, char **argv) {
   std::string coordsPath = "coords.json";
   int winW = 0, winH = 0;   // 0 = fullscreen desktop
   float fpsCool = 60, fpsHot = 12, tWarm = 65, tHot = 78, speed = 1.f;
+  float basePeriod = 24.f, spread = 0.15f, ringJitter = 0.05f, phaseSpread = 1.f;
   bool bench = false, staticMode = false, vsync = true;
   std::string shotPath;
 
@@ -421,6 +454,11 @@ int main(int argc, char **argv) {
     else if (a == "--warm") tWarm = next(65);
     else if (a == "--hot") tHot = next(78);
     else if (a == "--speed") speed = next(1.f);
+    else if (a == "--period") basePeriod = next(24.f);
+    else if (a == "--spread") spread = next(0.15f);
+    else if (a == "--ring-jitter") ringJitter = next(0.05f);
+    else if (a == "--phase-spread") phaseSpread = next(1.f);
+    else if (a == "--sync") { spread = 0.f; ringJitter = 0.f; phaseSpread = 0.f; }
     else if (a == "--bench") bench = true;
     else if (a == "--novsync") vsync = false;
     else if (a == "--shot" && i + 1 < argc) shotPath = argv[++i];
@@ -429,6 +467,10 @@ int main(int argc, char **argv) {
     else { fprintf(stderr, "unknown option: %s\n", a.c_str()); usage(); return 2; }
   }
   if (tHot <= tWarm) tHot = tWarm + 1.f;
+  if (basePeriod < 1.f) basePeriod = 1.f;
+  spread = std::min(0.95f, std::max(0.f, spread));
+  ringJitter = std::min(0.95f, std::max(0.f, ringJitter));
+  phaseSpread = std::min(1.f, std::max(0.f, phaseSpread));
   if (fpsCool < 1) fpsCool = 1;
   if (fpsHot < 1) fpsHot = 1;
 
@@ -512,6 +554,7 @@ int main(int argc, char **argv) {
   const GLint uHalfWorld = glGetUniformLocation(prog, "uHalfWorld");
   const GLint uRadius = glGetUniformLocation(prog, "uRadius");
   const GLint uShift = glGetUniformLocation(prog, "uShift");
+  const GLint uRingScale = glGetUniformLocation(prog, "uRingScale");
   const GLint uScale = glGetUniformLocation(prog, "uScale");
   const GLint uPalette = glGetUniformLocation(prog, "uPalette");
 
@@ -541,7 +584,13 @@ int main(int argc, char **argv) {
     fprintf(stderr, "could not read circles from %s\n", coordsPath.c_str());
     return 1;
   }
+  deriveCharacter(circles, basePeriod, spread, ringJitter, phaseSpread);
   SDL_Log("%d circles from %s", (int)circles.size(), coordsPath.c_str());
+  if (spread > 0.f || ringJitter > 0.f) {
+    float lo = 1e9f, hi = 0.f;
+    for (const Circle &c : circles) { lo = std::min(lo, c.period); hi = std::max(hi, c.period); }
+    SDL_Log("periods %.1f-%.1f s, colour stride +-%.0f%%", lo, hi, ringJitter * 100.f);
+  }
 
   // reload when the editor writes the file, so both can run at once
   long long coordsMtime = 0;
@@ -579,6 +628,7 @@ int main(int argc, char **argv) {
         std::string txt;
         std::vector<Circle> fresh;
         if (readFile(coordsPath.c_str(), txt) && parseCoords(txt, fresh)) {
+          deriveCharacter(fresh, basePeriod, spread, ringJitter, phaseSpread);
           circles.swap(fresh);
           coordsMtime = m;
           SDL_Log("reloaded %d circles", (int)circles.size());
@@ -606,12 +656,9 @@ int main(int argc, char **argv) {
     for (size_t i = 0; i < circles.size(); i++) {
       const Circle &c = circles[i];
       const float r = c.d * 0.5f;
-      // same per-circle period and phase as index.html, so the native build
-      // animates the layout the browser one was showing frozen
-      const float dur = 22.f + std::fmod((float)i * 0.83f, 6.f);
-      const float off = (float)i * 3.7f + (float)(i * i) * 0.31f;
-      float p = (T + off) / dur;
+      const float p = c.phase + T / c.period;
       glUniform1f(uShift, p - std::floor(p));
+      glUniform1f(uRingScale, c.ringScale);
 
       const float margin = 1.5f / scale;          // room for the antialiased rim
       const float halfW = r + margin;
