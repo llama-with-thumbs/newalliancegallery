@@ -170,13 +170,19 @@ static float hash01(uint32_t x) {
 // read as one object breathing. Each gets its own period, its own start point
 // in the colour sequence, and a slightly different radial stride so the bands
 // do not line up across circles either.
+//
+// Periods spread only downward in speed - basePeriod is the fastest, and each
+// circle is that or slower - so widening the spread never makes anything run
+// faster than it already does.
 static void deriveCharacter(std::vector<Circle> &cs, float basePeriod,
                             float spread, float ringJitter, float phaseSpread) {
   for (size_t i = 0; i < cs.size(); i++) {
     Circle &c = cs[i];
     uint32_t k = (uint32_t)(c.id ? c.id : (int)i + 1) * 2654435761u;
     float h1 = hash01(k + 1u), h2 = hash01(k + 2u), h3 = hash01(k + 3u);
-    c.period = basePeriod * (1.f + spread * (h1 * 2.f - 1.f));
+    // one-sided: --period is the fastest any circle runs, and the spread only
+    // ever lengthens. Nothing speeds up when the spread is widened.
+    c.period = basePeriod * (1.f + spread * h1);
     c.ringScale = 1.f + ringJitter * (h2 * 2.f - 1.f);
     c.phase = h3 * phaseSpread;
     if (c.period < 1.f) c.period = 1.f;
@@ -440,7 +446,7 @@ int main(int argc, char **argv) {
   std::string coordsPath = "coords.json";
   int winW = 0, winH = 0;   // 0 = fullscreen desktop
   float fpsCool = 60, fpsHot = 12, tWarm = 65, tHot = 78, speed = 1.f;
-  float basePeriod = 24.f, spread = 0.15f, ringJitter = 0.05f, phaseSpread = 1.f;
+  float basePeriod = 24.f, spread = 0.8f, ringJitter = 0.05f, phaseSpread = 1.f;
   bool bench = false, staticMode = false, vsync = true;
   std::string shotPath;
 
@@ -455,7 +461,7 @@ int main(int argc, char **argv) {
     else if (a == "--hot") tHot = next(78);
     else if (a == "--speed") speed = next(1.f);
     else if (a == "--period") basePeriod = next(24.f);
-    else if (a == "--spread") spread = next(0.15f);
+    else if (a == "--spread") spread = next(0.8f);
     else if (a == "--ring-jitter") ringJitter = next(0.05f);
     else if (a == "--phase-spread") phaseSpread = next(1.f);
     else if (a == "--sync") { spread = 0.f; ringJitter = 0.f; phaseSpread = 0.f; }
@@ -468,7 +474,7 @@ int main(int argc, char **argv) {
   }
   if (tHot <= tWarm) tHot = tWarm + 1.f;
   if (basePeriod < 1.f) basePeriod = 1.f;
-  spread = std::min(0.95f, std::max(0.f, spread));
+  spread = std::min(3.f, std::max(0.f, spread));
   ringJitter = std::min(0.95f, std::max(0.f, ringJitter));
   phaseSpread = std::min(1.f, std::max(0.f, phaseSpread));
   if (fpsCool < 1) fpsCool = 1;
@@ -587,9 +593,17 @@ int main(int argc, char **argv) {
   deriveCharacter(circles, basePeriod, spread, ringJitter, phaseSpread);
   SDL_Log("%d circles from %s", (int)circles.size(), coordsPath.c_str());
   if (spread > 0.f || ringJitter > 0.f) {
+    std::string list;
     float lo = 1e9f, hi = 0.f;
-    for (const Circle &c : circles) { lo = std::min(lo, c.period); hi = std::max(hi, c.period); }
+    for (const Circle &c : circles) {
+      lo = std::min(lo, c.period);
+      hi = std::max(hi, c.period);
+      char b[32];
+      snprintf(b, sizeof(b), "%s%d:%.1f", list.empty() ? "" : " ", c.id, c.period);
+      list += b;
+    }
     SDL_Log("periods %.1f-%.1f s, colour stride +-%.0f%%", lo, hi, ringJitter * 100.f);
+    SDL_Log("per circle (id:seconds) %s", list.c_str());
   }
 
   // reload when the editor writes the file, so both can run at once
