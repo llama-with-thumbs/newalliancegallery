@@ -446,7 +446,7 @@ int main(int argc, char **argv) {
   std::string coordsPath = "coords.json";
   int winW = 0, winH = 0;   // 0 = fullscreen desktop
   float fpsCool = 60, fpsHot = 12, tWarm = 65, tHot = 78, speed = 1.f;
-  float basePeriod = 24.f, spread = 0.8f, ringJitter = 0.05f, phaseSpread = 1.f;
+  float basePeriod = 24.f, spread = 2.0f, ringJitter = 0.05f, phaseSpread = 1.f;
   bool bench = false, staticMode = false, vsync = true;
   std::string shotPath;
 
@@ -461,7 +461,7 @@ int main(int argc, char **argv) {
     else if (a == "--hot") tHot = next(78);
     else if (a == "--speed") speed = next(1.f);
     else if (a == "--period") basePeriod = next(24.f);
-    else if (a == "--spread") spread = next(0.8f);
+    else if (a == "--spread") spread = next(2.0f);
     else if (a == "--ring-jitter") ringJitter = next(0.05f);
     else if (a == "--phase-spread") phaseSpread = next(1.f);
     else if (a == "--sync") { spread = 0.f; ringJitter = 0.f; phaseSpread = 0.f; }
@@ -474,7 +474,7 @@ int main(int argc, char **argv) {
   }
   if (tHot <= tWarm) tHot = tWarm + 1.f;
   if (basePeriod < 1.f) basePeriod = 1.f;
-  spread = std::min(3.f, std::max(0.f, spread));
+  spread = std::min(6.f, std::max(0.f, spread));
   ringJitter = std::min(0.95f, std::max(0.f, ringJitter));
   phaseSpread = std::min(1.f, std::max(0.f, phaseSpread));
   if (fpsCool < 1) fpsCool = 1;
